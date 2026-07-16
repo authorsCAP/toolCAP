@@ -1,0 +1,160 @@
+model SumConCourseMan
+
+class Student
+attributes
+    id : Integer
+    name : String  
+    currentSemester : String
+    totalTuition : Real
+    totalCreditsCurrentSemester : Integer
+    maxTuitionLimit : Real
+    exemptedFromMinCredits : Boolean
+    currentYear : Integer
+    previousSemesterGPA : Real
+    academicStatus : AcademicStatus
+    withdrawalsLastSemester : Integer
+    status : StatusStudent
+    maxFinancialAid : Real
+    isDualMajor : Boolean
+    major1 : String
+    totalCredits : Integer  
+end
+
+class CourseModule
+attributes
+    id : Integer
+    code : String
+    name : String
+    credits : Integer
+    tuitionFee : Real
+    type : TypeCourse
+    level : LevelCourse
+    programName : String
+end
+
+class CourseOffering
+attributes
+    id : Integer
+    semester : String
+    year : Integer
+end
+--===============================
+associationclass Enrolments
+between
+   Student[1..*] role student 
+   CourseOffering[*] role offering
+    
+--    Student[1] role student     
+--    CourseOffering[1] role offering
+attributes
+    id : Integer
+    status : EnrolStatus
+    grade : String  
+    scholarshipAmount : Real
+   programName : String   
+end
+--=================================
+association Offers
+between
+    CourseModule[1] role module
+    CourseOffering[*] role offerings
+end
+
+association Prerequisites
+between
+    CourseModule[*] role module
+    CourseModule[*] role prerequisites
+end
+
+--=================================
+enum AcademicStatus {PROBATION, GOOD}
+enum StatusStudent {GRADUATED, ENROLLED}
+enum TypeCourse {CORE, ELECTIVE}
+enum LevelCourse {ADVANCED, BASIC}
+enum EnrolStatus {PLANNED, ACTIVE, COMPLETED, WITHDRAWN}
+--===================================
+constraints
+
+context Student
+inv SumConType1_TotalTuitionEqualsSum:
+let s = self.enrolments
+->select(e | e.offering.semester = self.currentSemester)
+->collect(e | e.offering.module.tuitionFee)->sum()
+in s = self.totalTuition
+
+context Student
+inv SumConType2_TotalCreditsEqualsSum:
+self.totalCreditsCurrentSemester =
+self.enrolments
+->select(e | e.offering.semester = self.currentSemester)
+->collect(e | e.offering.module.credits)->sum()
+
+context Student
+inv SumConType3_TuitionWithinLimit:
+let s = self.enrolments
+->select(e | e.offering.semester = self.currentSemester)
+->collect(e | e.offering.module.tuitionFee)->sum()
+in s <= self.maxTuitionLimit
+
+context Student
+inv SumConType4_MaxCreditsPerTerm:
+let s = self.enrolments
+->select(e | e.offering.semester = self.currentSemester)
+->collect(e | e.offering.module.credits)->sum()
+in s <= 30
+
+context Student
+inv SumConType5_MinCreditsUnlessExempt:
+let s = self.enrolments
+->select(e | e.offering.semester = self.currentSemester)
+->collect(e | e.offering.module.credits)->sum()
+in (not self.exemptedFromMinCredits) implies s >= 15
+
+context Student
+inv SumConType6_Year1_12to18:
+let s = self.enrolments
+->select(e | e.offering.semester = self.currentSemester)
+->collect(e | e.offering.module.credits)->sum()
+in self.currentYear = 1 implies (s >= 12 and s <= 18)
+
+context Student
+inv SumConType7_FinancialAidTotal:
+let totalAid = self.enrolments
+->select(e | e.student = self)
+->collect(e | e.scholarshipAmount)->sum()
+in totalAid <= self.maxFinancialAid
+
+context Student
+inv SumConType8_GPAPreviousSemester:
+let s = self.enrolments
+->select(e | e.offering.semester = self.currentSemester)
+->collect(e | e.offering.module.credits)->sum()
+in self.previousSemesterGPA < 2.5 implies s <= 20
+
+context Student
+inv SumConType9_ProbationAdvancedLimit:
+let sum = self.enrolments
+->select(e | e.offering.module.level = 'ADVANCED' and e.offering.semester = self.currentSemester)
+->collect(e | 1)->sum()
+in self.academicStatus = 'PROBATION' implies sum <= 2
+
+context Student
+inv SumConType10_WithdrawalPenalty:
+let s = self.enrolments
+->select(e | e.offering.semester = self.currentSemester)
+->collect(e | e.offering.module.credits)->sum()
+in self.withdrawalsLastSemester > 2 implies s <= 12
+
+context Student
+inv SumConType11_CoreCreditsRequirement:
+let coreCredits = self.enrolments
+->select(e | e.offering.module.type = 'CORE')
+->collect(e | e.offering.module.credits)->sum()
+in self.status = 'GRADUATED' implies coreCredits >= self.totalCredits * 0.5
+
+context Student
+inv SumConType12_MinPerMajor1:
+let s = self.enrolments
+->select(e | e.offering.semester = self.currentSemester and e.programName = self.major1)
+->collect(e | e.offering.module.credits)->sum()
+in self.isDualMajor implies s >= 12

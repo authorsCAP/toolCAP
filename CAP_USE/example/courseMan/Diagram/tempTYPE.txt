@@ -1,0 +1,148 @@
+Type01 of SUMCONSTRAINT:
+\begin{description}
+\item[Pattern Name:] \Name{SumConstraint}
+\item[Description:] This pattern defines OCL constraints for controlling and managing quantities, values, or resources through aggregation operations. 
+Specifically, this pattern ensures that the aggregate value stored in an entity always equals the total of its related components. It is used to prevent discrepancies between derived data and source data, thereby supporting reconciliation and auditing.
+\item[Template:] The parameterized OCL expression of this pattern is defined based on the following main source.
+\begin{itemize}
+\item \textit{Class diagram structure:} Figure~\ref{fig:sumConstraint} (label~I) shows a class diagram depicting three classes, their attributes, and the associations between them. This diagram defines the context of the underlying OCL constraint template.    
+\item \textit{OCL template:} Figure~\ref{fig:sumConstraint} (label~II) illustrates the OCL template used to generate constraints that express the following restriction: The sum of the values of the attribute \texttt{\_\_sumAttr\_\_} over all objects \texttt{o} in a collection filtered from the set of \texttt{\_\_ClassD\_\_} objects associated with the current \texttt{\_\_ClassA\_\_} instance (\texttt{self}) is computed according to the filtering criterion defined by the variable \texttt{\_\_filterAttr\_\_}.
+%   
+The computed sum is then validated against \texttt{\_\_thresholdAttr\_\_}, to ensure that the threshold condition is satisfied and that objects do not exceed the permitted limit.
+%
+Note that the names of the variables in the template begin and end with ``\_\_''. The variable name \texttt{\_\_sumConstraint01\_invID\_\_} implies that this is OCL template type~01 of the \Name{SumConstraint} pattern. 
+\item \textit{Annotation specification:} We extend \Name{DCSL} with new annotations, as illustrated in Fig.~\ref{fig:sumConstraint} (label~III), to capture the parameters of the OCL template. The annotation specification enables the generation of an OCL constraint once the parameters are assigned concrete values.
+\end{itemize}
+\item[Example:] We focus on the \ttt{\bf{CourseMan}} model, as shown in Fig.~\ref{fig:eg-courseman}, to illustrate this pattern.
+The underlying constraint ensures that the maximum number of credits a student can register for is limited to 12 credits per semester when the student is under academic warning. This helps the student focus on improving their GPA. The constraint is expressed in OCL as follows:
+\begin{verbatim}
+context Student
+inv courseMan_inv06_ProbationRules:
+  let v:Integer=self.enrolment
+    ->select(e|e.status=EnrolStatus::ACTIVE)
+    ->collect(e|e.offering.module.credits)->sum() 
+  in self.overallStatus=AcademicStatus::PROBATION 
+    implies v<=12
+\end{verbatim}
+%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\noindent We define the specification in \Name{DSCL} to generate the constraint as follows:
+%name     = 'cm06_ProbationRules'
+\begin{verbatim}
+@SumConstraint(
+  name='courseMan_inv06_ProbationRules',
+  assocCls=@AssocCls(assoc={'Enrolment'}),
+  rolePath=@RolePath(role={'offering','module'}),
+  collect={@AttrCond(attr='status',
+    matchVal='EnrolStatus::ACTIVE')},
+  sumAttr='credits',
+  fixAttr={@AttrRef(maxLim = 12)},
+  ifPart={@AttrCond(attr='overallStatus',
+    matchVal='AcademicStatus::PROBATION')}
+)
+class Student {...}
+\end{verbatim}
+\end{description}
+
+Type01 PREREQUISITECONSTRAINT
+\begin{description}
+\item[Pattern Name:] \Name{PrerequisiteConstraint} (Type01 - prerequisite/Corequisite/Exclusion Constraints)
+%
+\item[Description:] This pattern defines OCL constraints that ensures structural correctness of course relationships and enrollment rules. They require all prerequisites and corequisites to be satisfied (either completed or co‑enrolled), forbid self or cyclic dependencies, and enforce symmetric exclusions. They also demand that appropriate offerings for prerequisite and corequisite modules exist in suitable terms and sequences.
+%
+\item[Template:] The parameterized OCL expression of this pattern is defined based on the following main source.
+\begin{itemize}
+\item \textit{Class diagram structure:} Figure~\ref{fig:prerequisiteConstraint1} (label~I) shows a class diagram depicting the classes, their attributes, and the associations between them, the associations between \texttt{\_\_ClassC\_\_} and itself represents collections such as prerequisites, corequisites, or exclusions. This diagram defines the context of the underlying OCL constraint template.    
+%
+\item \textit{OCL template:} Figure~\ref{fig:prerequisiteConstraint1} (label~II) illustrates the OCL template used to generate constraints that express the following restriction:
+
+For each object of \texttt{\_\_ClassA\_\_}, we consider a filtered collection of \texttt{\_\_ClassD\_\_} objects related to self, selected according to the filtering criterion given by \texttt{\_\_filterAttr\_\_} (for example, status/term) and the module kind \texttt{\_\_prereqAttr\_\_} (for example, ADVANCED/CORE).
+For every activated object in this filtered \texttt{\_\_ClassD\_\_} collection, and for each prerequisite object reachable through its associated \texttt{\_\_ClassC\_\_} instance via \texttt{\_\_prerequisites\_\_}, the constraint requires that all such prerequisite objects are satisfied under the defined conditions.
+In essence, every required related element—whether a prerequisite, a concurrent requirement, or an exclusion under adapted conditions—must be satisfied according to the specified criteria before, or at the moment when, the target element becomes active.
+%
+Note that the names of the variables in the template begin and end with ``\_\_''. The variable name \texttt{\_\_prerequisiteConstraint01\_invID\_\_} implies that this is OCL template type~01 of the \Name{prerequisiteConstraint} pattern. 
+%
+\item \textit{Annotation specification:} We extend \Name{DCSL} with new annotations, as illustrated in Fig.~\ref{fig:prerequisiteConstraint1} (label~III), to capture the parameters of the OCL template. The annotation specification enables the generation of an OCL constraint once the parameters are assigned concrete values.
+\end{itemize}
+\item[Example:] We focus on the \ttt{\bf{CourseMan}} model, as shown in Fig.~\ref{fig:eg-courseman}, to illustrate this pattern.
+The underlying constraint ensures that registration is allowed only when all prerequisites have been satisfied. Each prerequisite must meet the minimum required level (for example, $\geq$~‘C’). The constraint is expressed in OCL as follows:
+\begin{verbatim}
+context Student
+inv courseMan_inv20_PrerequisitesSatisfied:
+  self.enrolment->forAll(e |
+    (e.status=EnrolStatus::ENROLLED 
+        and e.offering.term = self.curTerm)
+    implies e.offering.module.prerequisites->forAll(pr |
+        self.enrolment->exists(pe |
+          pe.offering.module = pr and
+          pe.status = EnrolStatus::COMPLETED and
+          pe.grade >= 'C'
+        )
+      )
+  )
+\end{verbatim}
+%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\noindent We define the specification in \Name{DSCL} to generate the constraint as follows:
+%name     = 'PrerequisitesSatisfied'
+\begin{verbatim}
+@PrerequisiteConstraint(
+	name='courseMan_inv20',
+    assocCls =@AssocCls(assoc={'Enrolment'}),
+    rolePath = @RolePath(role={'offering', 'module'}),
+    rolePath2=@RolePath(role={'term', 'termRecord'})
+    collect ={@AttrCond(attr='status',matchVal='EnrolStatus::ENROLLED')},
+	checkedRole =   'prerequisites',
+	  ifPart={@AttrCond(attr='status', matchStr='COMPLETED'),
+	          @AttrCond(attr='grade', minLim='C')}
+)
+class Student {...}
+\end{verbatim}
+\end{description}
+
+Type01 for SCHEDULECONSTRAINT
+\begin{description}
+\item[Pattern Name:] \Name{ScheduleConstraint} (Type01 – Time Conflict Prevention)
+%
+\item[Description:] This pattern defines OCL constraints for preventing temporal overlaps in scheduling systems. It ensures that no two related objects share the same temporal slot or schedule identifier within the same scope (term, instructor, room, or student). This prevents double-booking scenarios, guarantees feasible resource allocation, and maintains conflict-free timetables across multiple stakeholders.
+%
+\item[Template:] The parameterized OCL expression of this pattern is defined based on the following main source.
+\begin{itemize}
+\item \textit{Class diagram structure:} Figure~\ref{fig:scheduleConstraintType01} (label~I) shows a class diagram depicting four main classes: \texttt{\_\_ClassA\_\_}, \texttt{\_\_ClassD\_\_}, \texttt{\_\_ClassB\_\_}, and \texttt{\_\_ClassC\_\_}. The diagram includes associations between these classes and attributes for temporal identification. This structure defines the context for conflict detection across related objects.
+%
+\item \textit{OCL template:} Figure~\ref{fig:scheduleConstraintType01} (label~II) illustrates the OCL template used to generate constraints that express the following restriction:
+For each object of \texttt{\_\_ClassA\_\_}, we consider a filtered collection of \texttt{\_\_ClassD\_\_} objects related to self, selected according to the filtering criterion defined by \texttt{\_\_filterAttr\_\_} (such as status, term, or scope). For every object \texttt{e1} in this filtered collection, the template requires that no other distinct object \texttt{e2} in the same filtered collection shares the same temporal identifier, accessed through the attribute \texttt{\_\_scheduleAttr\_\_} (such as \texttt{e1.offering.schedule}).
+
+The constraint enforces that for all pairs of distinct objects in the filtered collection, their schedule projections must be different: \texttt{e1.\_\_schedule\_\_ $<>$ e2.\_\_scheduleAttr\_\_}. This guarantees no temporal conflicts exist within the defined scope.
+
+Note that the names of the variables in the template begin and end with ``\_\_''. The variable name \texttt{\_\_scheduleConstraint01\_invID\_\_} implies that this is OCL template type~01 of the \Name{ScheduleConstraint} pattern.
+%
+\item \textit{Annotation specification:} We extend \Name{DCSL} with new annotations, as illustrated in Fig.~\ref{fig:scheduleConstraintType01} (label~III), to capture the parameters of the OCL template. The annotation specification enables the generation of an OCL constraint once the parameters are assigned concrete values.
+\end{itemize}
+%
+\item[Example:] We focus on the \ttt{\bf{CourseMan}} model, as shown in Fig.~\ref{fig:eg-courseman}, to illustrate this pattern.
+The underlying constraint ensures that a student cannot enroll in two classes that occur at the same time in the timetable. This prevents double-booking scenarios and guarantees feasible schedules. The constraint is expressed in OCL as follows:
+\begin{verbatim}
+context Student
+inv courseMan_inv37_NoTimeConflicts:
+self.enrolment ->select(e | e.status = EnrolStatus::ACTIVE
+and e.offering.term = self.curTerm) ->forAll(e1 |
+self.enrolment ->select(e | e.status = EnrolStatus::ACTIVE
+and e.offering.term = self.curTerm) ->forAll(e2 |
+e1<>e2 implies e1.offering.schedule<>e2.offering.schedule
+))
+\end{verbatim}
+\noindent We define the specification in \Name{DSCL} to generate the constraint as follows:
+\begin{verbatim}
+@ScheduleConstraint(
+    name='courseMan_inv37',
+    assocCls=@AssocCls(assoc={'Enrolment'}),
+    rolePath=@RolePath(role={'offering'}),
+    rolePath2=@RolePath(role={'term','termRecord'}),
+    collect={@AttrCond(attr='status', matchVal='EnrolStatus::ACTIVE')},
+    checkRole='schedule',
+    ifPart={@AttrCond(attr='schedule', neg='true'
+)
+class Student {...}
+\end{verbatim}
+\end{description}

@@ -1,0 +1,150 @@
+model orderMan
+
+class Order
+attributes
+id : Integer
+currentPeriod : Integer
+totalAmount : Real
+totalUnitsCurrentPeriod : Integer
+maxAmountLimit : Real
+maxUnitsPerPeriod : Integer
+exemptedFromMinUnits : Boolean
+paymentScoreLastPeriod : Real
+orderStatus : String -- e.g., 'OPEN' | 'ON_HOLD' | 'CLOSED'
+returnsLastPeriod : Integer
+isBundleOrder : Boolean
+isFirstTime : Boolean
+minAmountFirstTime : Real
+maxAmountFirstTime : Real
+end
+
+class Product
+attributes
+id : Integer
+name : String
+unitPrice : Real
+level : String -- e.g., 'BASIC' | 'PREMIUM' | 'ADVANCED'
+category : String -- e.g., 'CORE' | 'ACCESSORY' | ...
+end
+
+associationclass OrderLine
+between
+Order[1..*] role order
+Product[*] role product
+attributes
+id : Integer
+quantity : Integer
+period : Integer
+isBillable : Boolean
+status : String -- e.g., 'Confirmed' | 'Cancelled' | 'Returned'
+end
+
+constraints
+
+-- Type #1 – Total Value Calculation Constraint
+-- The order total must equal the sum of billable confirmed line amounts in currentPeriod.
+context Order
+inv T1_TotalAmountEqualsSum:
+let s : Real =
+self.orderLine
+->select(l | l.isBillable = true and l.status = 'Confirmed' and l.period = self.currentPeriod)
+->collect(l | l.product.unitPrice * l.quantity)
+->sum()
+in s = self.totalAmount
+
+-- Type #2 – Quantity Aggregation Constraint
+-- Total units displayed must equal the sum of quantities in currentPeriod.
+context Order
+inv T2_TotalUnitsEqualsSum:
+self.totalUnitsCurrentPeriod =
+self.orderLine
+->select(l | l.period = self.currentPeriod)
+->collect(l | l.quantity)
+->sum()
+
+-- Type #3 – Financial Limit Enforcement
+-- Amount in currentPeriod must not exceed the order’s individual limit.
+context Order
+inv T3_AmountWithinLimit:
+let s : Real =
+self.orderLine
+->select(l | l.isBillable = true and l.period = self.currentPeriod)
+->collect(l | l.product.unitPrice * l.quantity)
+->sum()
+in s <= self.maxAmountLimit
+
+-- Type #4 – Maximum Resource Allocation Constraint
+-- Total units per currentPeriod must not exceed maxUnitsPerPeriod (or a policy constant).
+context Order
+inv T4_MaxUnitsPerPeriod:
+let s : Integer =
+self.orderLine
+->select(l | l.period = self.currentPeriod)
+->collect(l | l.quantity)
+->sum()
+in s <= self.maxUnitsPerPeriod
+
+-- Type #5 – Minimum Resource Requirement Constraint
+-- Unless exempted, an order must have at least 5 units in currentPeriod.
+context Order
+inv T5_MinUnitsUnlessExempt:
+let s : Integer =
+self.orderLine
+->select(l | l.period = self.currentPeriod)
+->collect(l | l.quantity)
+->sum()
+in (not self.exemptedFromMinUnits) implies s >= 5
+
+-- Type #6 – Performance-Based Resource Limitation
+-- If last period’s payment score < 80, cap the currentPeriod amount at 2000.0.
+context Order
+inv T6_PerformanceCapOnAmount:
+let s : Real =
+self.orderLine
+->select(l | l.isBillable = true and l.period = self.currentPeriod)
+->collect(l | l.product.unitPrice * l.quantity)
+->sum()
+in (self.paymentScoreLastPeriod < 80.0) implies s <= 2000.0
+
+-- Type #7 – Conditional Resource Restriction (counting elements)
+-- When ON_HOLD, the number of PREMIUM product Line in currentPeriod must be ≤ 2.
+context Order
+inv T7_OnHoldPremiumLineLimit:
+let cnt : Integer =
+self.orderLine
+->select(l | l.period = self.currentPeriod and l.product.level = 'PREMIUM')
+->collect(l | 1)->sum()
+in (self.orderStatus = 'ON_HOLD') implies cnt <= 2
+
+-- Type #8 – Penalty-Based Future Limitation
+-- If returns last period > 3, then units this period ≤ 10.
+context Order
+inv T8_ReturnPenaltyUnitsCap:
+let s : Integer =
+self.orderLine
+->select(l | l.period = self.currentPeriod)
+->collect(l | l.quantity)
+->sum()
+in (self.returnsLastPeriod > 3) implies s <= 10
+
+-- Type #9 – Multi-Category Balanced Distribution
+-- For bundle orders, spend on CORE items this period must be ≥ 500.0.
+context Order
+inv T9_MinSpendPerCoreCategory:
+let s_core : Real =
+self.orderLine
+->select(l | l.period = self.currentPeriod and l.product.category = 'CORE')
+->collect(l | l.product.unitPrice * l.quantity)
+->sum()
+in self.isBundleOrder implies s_core >= 500.0
+
+-- Type #10 – Structured Allocation Framework (combined min & max)
+-- First-time orders must have amount in [minAmountFirstTime, maxAmountFirstTime].
+context Order
+inv T10_FirstTime_AmountRange:
+let s : Real =
+self.orderLine
+->select(l | l.isBillable = true and l.status = 'Confirmed' and l.period = self.currentPeriod)
+->collect(l | l.product.unitPrice * l.quantity)
+->sum()
+in self.isFirstTime implies (s >= self.minAmountFirstTime and s <= self.maxAmountFirstTime)

@@ -1,0 +1,312 @@
+-----SCHEDULE
+--============================
+------Student
+context Student
+inv sch01_NoTimeConflicts:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+    ->forAll(e1 |
+      self.enrolment
+        ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+        ->forAll(e2 |
+          e1 <> e2 implies e1.offering.schedule <> e2.offering.schedule
+        )
+    )
+context Student
+inv sch02_MaxWithdrawalsCurrentTerm:
+  Enrolment.allInstances()
+    ->select(e | 
+      e.student = self and
+      e.offering.term = self.curTerm and
+      e.status = EnrolStatus::WITHDRAWN
+    )->size() <= 2
+
+context Student
+inv sch03_MaxLifetimeWithdrawals:
+  Enrolment.allInstances()
+    ->select(e | 
+      e.student = self and
+      e.status = EnrolStatus::WITHDRAWN
+    )->size() <= 15  -- Lifetime limit
+
+context Student
+inv sch04_ValidWithdrawalDate:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::WITHDRAWN and e.offering.term = self.curTerm)
+    ->forAll(withdrawnEnrol |
+      withdrawnEnrol.withdrawDate <> null
+    )
+-----CourseOffering
+
+context CourseOffering
+inv sch05_InstructorNoScheduleConflicts:
+  CourseOffering.allInstances()
+    ->select(other | other.instructor = self.instructor and other.term = self.term and other <> self)
+    ->forAll(other | other.schedule <> self.schedule)
+context CourseOffering
+inv sch06_RoomAvailability:
+  CourseOffering.allInstances()
+    ->select(other | other.room = self.room and other.term = self.term and other <> self)
+    ->forAll(other | other.schedule <> self.schedule)
+context CourseOffering
+
+----------TermRecord
+
+context TermRecord
+inv sch7_BalancedScheduleLoad:
+  self.student.enrolment
+    ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)
+    ->collect(e | e.offering.module.credits)->sum() <= 24  -- Max total credits per term
+
+context TermRecord  
+inv sch8_NoIdenticalSchedules:
+  let activeEnrolments : Set(Enrolment) =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)->asSet() in
+  activeEnrolments->select(e | e.offering.schedule <> null)->isUnique(e | e.offering.schedule)
+
+---Instructor
+
+context Instructor
+inv sch9_InstructorAvailabilityValid:
+  self.offering->forAll(o |
+    self.availability <> null and 
+    o.schedule <> null and
+    (self.availability = 'FLEXIBLE' or o.term.isCurTerm = true)
+  )
+
+context Instructor
+inv sch10_MaxOfferingsPerTerm:
+  self.offering->select(o | o.term.isCurTerm = true)->size() <= self.workloadLimit
+
+---Enrolment
+
+context Enrolment
+inv sch11_LateEnrollmentRestrictions:
+  (self.status = EnrolStatus::ACTIVE and self.offering.module.isCapstone = true) implies
+    self.offering.term.isCurTerm = true
+--nếu đã từng trượt F, lần ENROLLED hiện tại phải khác term với lần F đó (tức không retake cùng kỳ)
+context Enrolment
+context Enrolment
+inv sch12_RepeatedModuleScheduleConsistency:
+  let previousFailures : Set(Enrolment) =
+    Enrolment.allInstances()
+      ->select(e | 
+        e.student = self.student and 
+        e.offering.module = self.offering.module and 
+        e.status = EnrolStatus::COMPLETED and
+        e.grade = 'F'
+      )->asSet() in
+  previousFailures->forAll(failure |
+    self.offering.term <> failure.offering.term
+  )
+ --====================================
+ ---------------ELIGIBILITY
+ --====================================
+ -----------Student
+ context Student
+inv elig01_NoviceAdvancedResourceRestriction:
+  let completedCredits : Integer = self.totalCreditsCompleted in
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.level = CourseLevel::ADVANCED)
+    ->forAll(advEnrol |
+      completedCredits >= 30 or  -- Not novice (completed 30+ credits)
+      self.status = StudentStatus::ENROLLED  -- Has proper status
+    )
+
+context Student  
+inv elig02_RestrictedModuleAccess:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.isCapstone = true)
+    ->forAll(capstoneEnrol |
+      self.overallStatus = AcademicStatus::GOOD  -- No probation students for capstone
+    )
+context Student
+inv elig03_OverloadRequiresHighPerformance:
+  let currentCredits : Integer =
+    self.enrolment
+      ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+      ->collect(e | e.offering.module.credits)->sum() in
+  (currentCredits > self.programEnrolment.program.maxCreditsPerTerm) implies
+    (self.cumulativeGPA >= 3.5 and self.overallStatus = AcademicStatus::GOOD)
+
+context Student
+inv elig04_ExtraCapacityEligibility:
+  let activeEnrolments : Integer =
+    self.enrolment->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)->size() in
+  (activeEnrolments > 6) implies  -- Standard load is 5-6 courses
+    self.cumulativeGPA >= 3.0
+context Student
+inv elig05_SpecializationProgressRequirement:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.isCapstone = true)
+    ->forAll(capstoneEnrol |
+      let progressRatio : Real = 
+        self.totalCreditsCompleted / self.programEnrolment.program.minTotalCredits in
+      progressRatio >= 0.80  -- 80% program completion
+    )
+
+-- Định nghĩa danh sách modules rõ ràng
+context Student
+inv elig06_ThesisEligibility_Simple:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE)
+    ->select(e | 
+      e.offering.module.code = 'THESIS' or
+      e.offering.module.code = 'RESEARCH' or
+      e.offering.module.code = 'CAPSTONE')
+    ->forAll(thesisEnrol |
+      self.totalCreditsCompleted >= self.programEnrolment.program.minTotalCredits * 0.75
+    )
+
+context Student
+inv elig07_InternshipBeforeThesis_Simple:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE)
+    ->select(e | e.offering.module.code = 'THESIS')
+    ->forAll(thesisEnrol |
+      self.enrolment->exists(internshipEnrol |
+        internshipEnrol.offering.module.code = 'INTERNSHIP' and
+        internshipEnrol.status = EnrolStatus::COMPLETED and
+        internshipEnrol.grade >= 'C'
+      )
+    )
+
+context Student
+inv elig08_BasicBeforeAdvancedLevel:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.level = CourseLevel::ADVANCED)
+    ->forAll(advEnrol |
+      let basicCredits : Integer =
+        self.enrolment
+          ->select(e | e.status = EnrolStatus::COMPLETED and 
+                       e.grade >= 'C' and 
+                       e.offering.module.level = CourseLevel::BASIC)
+          ->collect(e | e.offering.module.credits)->sum() in
+      basicCredits >= 45  -- Must complete 45 basic credits first
+    )
+context Student
+inv elig09_FinancialAidEligibility:
+  self.aidCap > 0.0 implies
+    (self.cumulativeGPA >= 2.0 and 
+     self.overallStatus = AcademicStatus::GOOD and
+     self.status <> StudentStatus::SUSPENDED)
+
+context Student
+inv elig10_GraduationEligibility:
+  self.status = StudentStatus::GRADUATED implies
+    (self.totalCreditsCompleted >= self.programEnrolment.program.minTotalCredits and
+     self.cumulativeGPA >= self.programEnrolment.program.minGPA and
+     self.enrolment->select(e | e.status = EnrolStatus::WITHDRAWN)->size() 
+       <= self.programEnrolment.program.maxWithdrawals)
+----------Program
+context Program
+inv elig11_ProgramAdmissionRequirements:
+  ProgramEnrolment.allInstances()
+    ->select(pe | pe.program = self and pe.status = EnrolProStatus::ACTIVE)
+    ->forAll(pe |
+      pe.student.cumulativeGPA >= self.minGPA or
+      pe.student.totalCreditsCompleted = 0  -- New students exempt
+    )
+
+context Program
+inv elig12_AdvancedProgramRequirements:
+  (self.code = 'Masters' or self.code = 'PhD' or 
+   self.code = 'MS' or self.code = 'MSc' or self.code = 'MA') implies
+    ProgramEnrolment.allInstances()
+      ->select(pe | pe.program = self)
+      ->forAll(pe |
+        pe.student.enrolment->exists(undergrad |
+          undergrad.status = EnrolStatus::COMPLETED and
+          undergrad.offering.module.level = CourseLevel::BASIC
+        )
+      )
+
+----------CourseOffering
+
+context CourseOffering
+inv elig13_OfferingCapacityEligibility:
+  Enrolment.allInstances()
+    ->select(e | e.offering = self and e.status = EnrolStatus::ACTIVE)
+    ->forAll(activeEnrol |
+      activeEnrol.student.overallStatus = AcademicStatus::GOOD or
+      self.curEnrollment <= self.minStudents  -- Allow probation students if under-enrolled
+    )
+
+context CourseOffering
+inv elig14_InstructorQualificationRequired:
+  self.module.level = CourseLevel::ADVANCED implies
+    self.instructor.workloadLimit <= 8  -- Advanced courses need experienced instructors
+-----------TermRecord
+context TermRecord
+inv elig15_TermAcademicStanding:
+  self.gpa < 2.0 implies
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)
+      ->collect(e | e.offering.module.credits)->sum() <= 12  -- Reduced load for low GPA
+
+context TermRecord
+inv elig16_ScholarshipEligibility:
+  self.scholarshipTotal > 0.0 implies
+    (self.gpa >= 3.0 and self.termCredits >= 12)
+-----------ProgramEnrolment
+context ProgramEnrolment
+inv elig17_ActiveEnrollmentRequirements:
+  self.status = EnrolProStatus::ACTIVE implies
+    (self.student.status <> StudentStatus::SUSPENDED and
+     self.student.balance >= 0.0)
+
+context ProgramEnrolment
+inv elig18_ProgramCompletionEligibility:
+  self.status = EnrolProStatus::COMPLETED implies(
+    let coreCreditsCompleted : Integer =
+      self.student.enrolment
+        ->select(e | e.status = EnrolStatus::COMPLETED and 
+                     e.grade >= 'C' and 
+                     e.offering.module.type = CourseType::CORE)
+        ->collect(e | e.offering.module.credits)->sum() in
+    coreCreditsCompleted >= self.program.minCoreCredits)
+-------------CourseModule
+context CourseModule
+inv elig19_CapstoneModuleEligibility:
+  self.isCapstone = true implies
+    self.requiredCredits >= 90  -- Must have 90+ credits before capstone
+
+context CourseModule
+inv elig20_AdvancedModulePrerequisites:
+  self.level = CourseLevel::ADVANCED implies
+    self.prerequisites->size() >= 2  -- Advanced modules need multiple prerequisites
+---------------Instructor
+context Instructor
+inv elig21_InstructorAdvancedCourseEligibility:
+  self.offering
+    ->select(o | o.module.level = CourseLevel::ADVANCED)
+    ->size() <= (self.workloadLimit / 2)  -- Limit advanced course teaching
+
+context Instructor
+inv elig22_InstructorCapstoneEligibility:
+  self.offering
+    ->select(o | o.module.isCapstone = true)
+    ->forAll(capstoneOff |
+      self.workloadLimit >= 5  -- Only experienced instructors for capstone
+    )
+
+----------------Enrolment
+context Enrolment
+inv elig23_RetakeEligibility:
+  let previousAttempts : Integer =
+    Enrolment.allInstances()
+      ->select(e | e.student = self.student and 
+                   e.offering.module = self.offering.module and
+                   e.status = EnrolStatus::COMPLETED)
+      ->size() in
+  (previousAttempts > 0 and self.status = EnrolStatus::ACTIVE) implies
+    self.student.cumulativeGPA >= 2.0  -- Need decent GPA for retakes
+
+context Enrolment
+inv elig24_WithdrawalEligibility:
+  self.status = EnrolStatus::WITHDRAWN implies
+    self.withdrawDate <> null and
+    self.student.enrolment
+      ->select(e | e.status = EnrolStatus::WITHDRAWN and e.offering.term = self.offering.term)
+      ->size() <= 2  -- Max 2 withdrawals per term

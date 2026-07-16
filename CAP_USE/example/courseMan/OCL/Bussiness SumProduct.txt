@@ -1,0 +1,6 @@
+OCL Derived constraints: govern derived constraints defining calculated properties based on existing data. They establish:
+1. Computing performance metrics using value-weight products;
+2. Determining progress thresholds based on proportional completion;
+3. Calculating remaining capacity in constrained environments;
+4. Determining current state based on temporal and quantitative conditions;
+5. Tracking unsuccessful attempts for specific resources. 

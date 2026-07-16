@@ -1,0 +1,5 @@
+
+In terminal
+
+chmod +x run-use.sh
+./run-use.sh

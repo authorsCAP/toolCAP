@@ -1,0 +1,123 @@
+model testUse
+class __ClassA__
+attributes
+	__valueAttr__ : Integer
+	__valStaAttr__ : __ValStaAttr__
+end
+class __ClassB__
+attributes
+	__valCondAttr__ : __ValCondAttr__
+end
+class __ClassC__
+attributes
+	__sumAttr__:Integer
+	__valTypeAttr__ : __ValTypeAttr__
+end
+associationclass __ClassD__
+between
+    __ClassA__[1] role __role__    
+    __ClassB__[*] role __role1__
+attributes
+	__weightAttr__ : Integer
+end
+association __linkbc__
+between
+	__ClassB__[*] role __role3__
+	__ClassC__[1] role __role2__
+end
+
+enum __ValueType__ {Integer, Real}
+enum __ValCondAttr__ {True, False, Flag1, Flag2, CORE}
+enum __ValTypeAttr__ {CORE}
+enum __ValStaAttr__ {Status,Status1, Status2}
+
+-- ======================
+-- CONSTRAINTS
+-- ======================
+constraints
+
+context __ClassA__ inv invToSum:
+let toSum = __ClassD__.allInstances()
+  ->select(e | e.__role__ = self)->asSet()
+  ->collect(e | e.__role1__.__role2__.__sumAttr__)->sum()
+   in toSum <= 30
+   
+	-- Equality (basic)
+context __ClassA__
+inv SumType1_TotalEqualsSum:
+  let total = __ClassD__.allInstances()
+    ->select(e | e.__role__ = self)
+    ->collect(e | e.__role1__.__role2__.__sumAttr__)->sum()
+  in self.__valueAttr__ = total
+
+	--Upper Limit Constraint
+context __ClassA__
+inv SumType2_WithinMaxLimit:
+  let sumVal = __ClassD__.allInstances()
+    ->select(e | e.__role__ = self)
+    ->collect(e | e.__role1__.__role2__.__sumAttr__)->sum()
+  in sumVal <= self.__valueAttr__ --maxLimit
+  
+  	--Lower Limit Constraint
+context __ClassA__
+inv SumType3_AboveMinThreshold:
+  let sumVal = __ClassD__.allInstances()
+    ->select(e | e.__role__ = self)
+    ->collect(e | e.__role1__.__role2__.__sumAttr__)->sum()
+  in sumVal >= self.__valueAttr__  --minRequirement
+
+ 	--Conditional Sum Constraint
+context __ClassA__
+inv SumType4_ConditionalLimit:
+  let sumVal = __ClassD__.allInstances()
+    ->select(e | e.__role__ = self and e.__role1__.__valCondAttr__ = true) --conditionFlag
+    ->collect(e | e.__role1__.__role2__.__sumAttr__)->sum()
+  in self.__valStaAttr__ = 'Status' implies sumVal <= self.__valueAttr__ --specialCap
+  
+  
+  	--Grouped / Category-Based
+context __ClassA__
+inv SumType5_ByCategory:
+  let coreCredits = __ClassD__.allInstances()
+    ->select(e | e.__role__ = self and e.__role1__.__role2__.__valTypeAttr__ = 'CORE') --type
+    ->collect(e | e.__role1__.__role2__.__sumAttr__)->sum()
+  in coreCredits >= self.__valueAttr__ --minCoreRequired
+
+	 -- Weighted Sum
+context __ClassA__
+inv SumType6_WeightedAggregation:
+  let weightedSum = __ClassD__.allInstances()
+    ->select(e | e.__role__ = self)
+    ->collect(e | e.__role1__.__role2__.__sumAttr__ * e.__weightAttr__)->sum() --__weightAttr__
+  in weightedSum <= self.__valueAttr__  --weightCap
+  
+	--Derived Attribute
+context __ClassA__
+inv SumType7_DerivedAttributeConsistency:
+  self.__valueAttr__= __ClassD__.allInstances()  --derivedAttr
+    ->select(e | e.__role__ = self)
+    ->collect(e | e.__role1__.__role2__.__sumAttr__)->sum()
+    
+    --Ratio or Percentage
+context __ClassA__
+inv SumType8_PercentageRequirement:
+  let totalCore = __ClassD__.allInstances()
+    ->select(e | e.__role__ = self and e.__role1__.__role2__.__valTypeAttr__ = 'CORE') --type
+    ->collect(e | e.__role1__.__role2__.__sumAttr__)->sum(),
+   total = __ClassD__.allInstances()
+    ->select(e | e.__role__ = self)
+    ->collect(e | e.__role1__.__role2__.__sumAttr__)->sum()
+  in totalCore / total >= 0.5
+  
+	--Nested Selection
+--context __ClassA__
+--inv SumTyp8_NestedFilter:
+--  let sumVal = __ClassD__.allInstances()
+--   ->select(e | e.__role__ = self)
+--    ->collect(e | e.__role1__.__role2__.subElements
+--       ->select(x | x.valid = true)
+--       ->collect(y | y.amount)->sum())->sum()
+--  in sumVal <= self.limitValue
+
+
+

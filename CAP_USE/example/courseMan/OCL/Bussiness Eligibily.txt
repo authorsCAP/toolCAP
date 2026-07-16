@@ -1,0 +1,13 @@
+OCL eligibility: govern qualification criteria for resource access based on actor attributes and history. They enforce: 
+1. Novice access limitation: Limiting novice actors from accessing advanced resources without authorization
+Restrict access to advanced resources for new students/novice actors without approval.
+2. Minimum performance for additional allocation: Requiring minimum performance metrics for additional resource allocation
+Require minimum performance levels (e.g. GPA) and approval before allocating additional resources (overload/extra capacity).
+3.  Sufficient progress before specialization: Ensuring sufficient progress before accessing specialized resources
+Only allow access to specialized/specific resources (thesis, capstone…) when cumulative progress reaches a threshold (\eg ≥ 80% of total program credits).
+4.  Foundational-before-advanced mandate: Mandating successful completion of foundational experiences before advanced ones
+Completion of foundational experience (\eg internship with minimum C) is required before participating in advanced experience (thesis).
+5. Required credentials for specialized resources: Validating that actors possess all required credentials for specialized resources.
+Only allow access to specific/sensitive resources when the required credentials are present for that resource.
+Financial aid eligibility (GPA + SAP requirements)
+Graduation eligibility

@@ -1,0 +1,79 @@
+model sumCondTemplate
+class __ClassA__
+attributes
+	__thresholdAttr__ : __ValueType__
+	__valStaAttr__ : __ValStaAttr__
+	__valueAttr__ : __ValueType__
+
+end
+class __ClassB__
+attributes
+	__valCondAttr__ : __ValCondAttr__
+end
+class __ClassC__
+attributes
+	__sumAttr__:__ValueType__
+	__valTypeAttr__ : __ValTypeAttr__
+end
+associationclass __ClassD__
+between
+    __ClassA__[1] role __role__    
+    __ClassB__[1] role __role1__
+attributes
+	__weightAttr__ : __ValueType__
+end
+
+class __ClassE__
+attributes
+	__derivedAttr__ : __ValueType__
+end
+class __ClassF__
+attributes
+	__matchAttr__ : __ValueType__
+end
+
+
+association linkbc
+between
+	__ClassB__[*] role __role12__
+	__ClassC__[1] role __role2__
+end
+association linkae
+between
+	__ClassA__[1] role __role13__
+	__ClassE__[*] role __role3__
+end
+association linkbf
+between
+	__ClassB__[*] role __role14__
+	__ClassF__[1] role __role4__
+end
+association linkef
+between
+	__ClassE__[*] role ____role3__5__
+	__ClassF__[1] role __role4__
+end
+association linkself
+between
+	__ClassC__[*] role __role2self__
+	__ClassC__[*] role __preqRole__
+end
+enum __ValueType__ {Integer, Real}
+enum __ValCondAttr__ {True, False, Flag1, Flag2, CORE}
+enum __ValTypeAttr__ {CORE}
+enum __ValStaAttr__ {Status,Status1, Status2}
+
+-- ======================
+-- CONSTRAINTS
+-- ======================
+constraints
+
+--context __ClassA__
+--inv ivn1_TotalTuitionEqualsSum:
+--  self.__role3__->forAll(str |
+ --   str.__derivedAttr__ = __ClassD__.allInstances()
+ --       ->select(e | e.__role__ = self and e.__role1__.__role4__ = str.__role4__)
+  --      ->collect(e | e.__role1__.__role2__.__sumAttr__)
+ --       ->sum()
+ -- )
+  

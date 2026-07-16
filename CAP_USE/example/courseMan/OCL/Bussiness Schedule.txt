@@ -1,0 +1,18 @@
+
+1. Time Conflict Prevention
+
+(Ngăn chặn trùng lịch học – chống đăng ký hai lớp cùng thời gian)
+Sinh viên không thể đăng ký hai học phần (CourseOffering) có lịch học trùng nhau.
+context Student
+2. Theory and Practice Co-enrollment
+
+(Yêu cầu học đồng thời lý thuyết và thực hành nếu cần)
+Nếu môn học có cả phần lý thuyết và thực hành, sinh viên phải đăng ký cả hai cùng kỳ;
+hoặc nếu đã hoàn thành một trong hai thì được miễn.
+ 3. Limited Class Switch within First Week
+
+(Giới hạn số lần chuyển lớp trong 7 ngày đầu kỳ học)
+Sinh viên chỉ được chuyển lớp tối đa 2 lần trong 7 ngày đầu học kỳ.
+4. Maximum Cumulative Class Switch Limit
+
+

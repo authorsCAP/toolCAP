@@ -1,0 +1,37 @@
+model sumCondTemplate
+enum __AttrType3__ {BASIC, ADVANCED, CORE, ELECTIVE}
+enum __AttrType2__ {CORE}
+enum __FilAttrType__ {__matchConst__}
+enum __AttrType1__ {__matchConst__}
+enum __NumType__ {Integer, Real, __}
+enum __NumType2__ {Integer, Real, __}
+enum __ValCondAttr__ {Flag1, Flag2, CORE}
+
+
+class __ClassA__
+attributes
+	__valueAttr1__ : __AttrType1__
+--	__thresholdAttr__ : __NumType__
+end
+class __ClassB__
+attributes
+--__valueAttr2__ : __AttrType2__
+end
+class __ClassC__
+attributes
+	__sumAttr__:__NumType__
+	__filterAttr1__:__AttrType3__
+	end
+associationclass __ClassD__
+between
+    __ClassA__[*] role __role1__    
+    __ClassB__[*] role __role2__
+attributes
+ 	__filterAttr__ : __AttrType2__
+end
+
+association linkbc
+between
+	__ClassB__[*] role __role2__
+	__ClassC__[1] role __role3__
+end

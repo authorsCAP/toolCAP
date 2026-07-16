@@ -1,0 +1,202 @@
+--====================================
+ ---------------ELIGIBILITY
+ --====================================
+ -----------Student
+context Student
+inv cm55_NoviceAdvancedResourceRestriction:
+  let completedCredits : Integer = self.totalCreditsCompleted in
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.level = CourseLevel::ADVANCED)
+    ->forAll(advEnrol |
+      completedCredits >= 30  
+    )
+
+
+context Student  
+inv cm56_RestrictedModuleAccess:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.isCapstone = true)
+    ->forAll(capstoneEnrol |
+      self.overallStatus = AcademicStatus::GOOD  -- No probation students for capstone
+    )
+context Student
+inv cm57_OverloadRequiresHighPerformance:
+  let currentCredits : Integer =
+    self.enrolment
+      ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+      ->collect(e | e.offering.module.credits)->sum() in
+  (currentCredits > self.programEnrolment.program.maxCreditsPerTerm) implies
+    (self.cumulativeGPA >= 3.5 and self.overallStatus = AcademicStatus::GOOD)
+
+-- Nếu muốn giữ theo credits:
+context Student
+inv cm58_ExtraCapacityEligibility:
+  let curCredits : Integer =
+    self.enrolment->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+                   ->collect(e | e.offering.module.credits)->sum()
+  in
+  (curCredits > self.programEnrolment.program.maxCreditsPerTerm) implies self.cumulativeGPA >= 3.0
+
+-- Định nghĩa danh sách modules rõ ràng
+context Student
+inv cm59_ThesisEligibility_Simple:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE)
+    ->select(e | 
+      e.offering.module.code = 'THESIS' or
+      e.offering.module.code = 'RESEARCH' or
+      e.offering.module.code = 'CAPSTONE')
+    ->forAll(thesisEnrol |
+      self.totalCreditsCompleted >= self.programEnrolment.program.minTotalCredits * 0.75
+    )
+
+context Student
+inv cm60_InternshipBeforeThesis_Simple:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE)
+    ->select(e | e.offering.module.code = 'THESIS')
+    ->forAll(thesisEnrol |
+      self.enrolment->exists(internshipEnrol |
+        internshipEnrol.offering.module.code = 'INTERNSHIP' and
+        internshipEnrol.status = EnrolStatus::COMPLETED and
+        internshipEnrol.grade >= 'C'
+      )
+    )
+
+context Student
+inv cm61_BasicBeforeAdvancedLevel:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.level = CourseLevel::ADVANCED)
+    ->forAll(advEnrol |
+      let basicCredits : Integer =
+        self.enrolment
+          ->select(e | e.status = EnrolStatus::COMPLETED and 
+                       e.grade >= 'C' and 
+                       e.offering.module.level = CourseLevel::BASIC)
+          ->collect(e | e.offering.module.credits)->sum() in
+      basicCredits >= 45  -- Must complete 45 basic credits first
+    )
+context Student
+inv cm62_FinancialAidEligibility:
+  self.aidCap > 0.0 implies
+    (self.cumulativeGPA >= 2.0 and 
+     self.overallStatus = AcademicStatus::GOOD and
+     self.status <> StudentStatus::SUSPENDED)
+
+context Student
+inv cm63_GraduationEligibility:
+  self.status = StudentStatus::GRADUATED implies
+    (self.totalCreditsCompleted >= self.programEnrolment.program.minTotalCredits and
+     self.cumulativeGPA >= self.programEnrolment.program.minGPA and
+     self.enrolment->select(e | e.status = EnrolStatus::WITHDRAWN)->size() 
+       <= self.programEnrolment.program.maxWithdrawals)
+
+--Capstone gate theo tập môn bắt buộc
+context Student
+inv cm64_CapstoneRequiredSetCompleted:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE 
+                  and e.offering.term = self.curTerm
+                  and e.offering.module.isCapstone = true)
+    ->forAll(cap |
+      cap.offering.module.requiredPreviousCourses->forAll(req |
+        self.enrolment->exists(done |
+          done.offering.module = req and
+          done.status = EnrolStatus::COMPLETED and
+          done.grade >= 'C'
+        )
+      )
+    )
+--Retake limit theo số lần F
+-- Không cho ENROLLED nếu đã có >= 2 lần COMPLETED với grade = 'F' cho cùng module
+context Student
+inv cm65_RetakeAfterFailsLimit:
+  let N : Integer = 2 in
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ENROLLED and e.offering.term = self.curTerm)
+    ->forAll(ae |
+      self.enrolment
+        ->select(x | x.offering.module = ae.offering.module and
+                     x.status = EnrolStatus::COMPLETED and x.grade = 'F')
+        ->size() < N
+    )
+
+----------Program
+context Program
+inv cm66_ProgramAdmissionRequirements:
+  ProgramEnrolment.allInstances()
+    ->select(pe | pe.program = self and pe.status = EnrolProStatus::ACTIVE)
+    ->forAll(pe |
+      pe.student.cumulativeGPA >= self.minGPA or
+      pe.student.totalCreditsCompleted = 0  -- New students exempt
+    )
+
+----------CourseOffering
+
+context CourseOffering
+inv cm67_OfferingCapacityEligibility:
+  Enrolment.allInstances()
+    ->select(e | e.offering = self and e.status = EnrolStatus::ACTIVE)
+    ->forAll(activeEnrol |
+      activeEnrol.student.overallStatus = AcademicStatus::GOOD or
+      self.curEnrollment <= self.minStudents  -- Allow probation students if under-enrolled
+    )
+
+-----------TermRecord
+context TermRecord
+inv cm68_TermAcademicStanding:
+  self.gpa < 2.0 implies
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)
+      ->collect(e | e.offering.module.credits)->sum() <= 12  -- Reduced load for low GPA
+
+context TermRecord
+inv cm69_ScholarshipEligibility:
+  self.scholarshipTotal > 0.0 implies
+    (self.gpa >= 3.0 and self.termCredits >= 12)
+-----------ProgramEnrolment
+context ProgramEnrolment
+inv cm70_ActiveEnrollmentRequirements:
+  self.status = EnrolProStatus::ACTIVE implies
+    (self.student.status <> StudentStatus::SUSPENDED and
+     self.student.balance >= 0.0)
+
+context TermRecord
+inv cm71_MaximumWithdrawals:
+  self.withdrawals <= 2  -- Maximum 2 withdrawals per term
+
+context ProgramEnrolment
+inv cm72_ProgramCompletionEligibility:
+  self.status = EnrolProStatus::COMPLETED implies(
+    let coreCreditsCompleted : Integer =
+      self.student.enrolment
+        ->select(e | e.status = EnrolStatus::COMPLETED and 
+                     e.grade >= 'C' and 
+                     e.offering.module.type = CourseType::CORE)
+        ->collect(e | e.offering.module.credits)->sum() in
+    coreCreditsCompleted >= self.program.minCoreCredits)
+-------------CourseModule
+context CourseModule
+inv cm73_CapstoneModuleEligibility:
+  self.isCapstone = true implies
+    self.requiredCredits >= 90  -- Must have 90+ credits before capstone
+
+----------------Enrolment
+context Enrolment
+inv cm74_RetakeEligibility:
+  let previousAttempts : Integer =
+    Enrolment.allInstances()
+      ->select(e | e.student = self.student and 
+                   e.offering.module = self.offering.module and
+                   e.status = EnrolStatus::COMPLETED)
+      ->size() in
+  (previousAttempts > 0 and self.status = EnrolStatus::ACTIVE) implies
+    self.student.cumulativeGPA >= 2.0  -- Need decent GPA for retakes
+
+context Enrolment
+inv cm75_WithdrawalEligibility:
+  self.status = EnrolStatus::WITHDRAWN implies
+    not self.withdrawDate.oclIsUndefined() and
+    self.student.enrolment
+      ->select(e | e.status = EnrolStatus::WITHDRAWN and e.offering.term = self.offering.term)
+      ->size() <= 2

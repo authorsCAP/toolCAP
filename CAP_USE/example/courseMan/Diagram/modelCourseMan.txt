@@ -1,0 +1,1919 @@
+model CourseManV1
+
+-- ======================
+-- ENUMERATIONS
+-- ======================
+enum StudentStatus {ENROLLED, GRADUATED, PROBATION, SUSPENDED}
+enum CourseLevel {BASIC, ADVANCED}
+enum CourseType {CORE, ELECTIVE}
+enum EnrolStatus {PLANNED, ACTIVE, COMPLETED, WITHDRAWN,ENROLLED}
+enum EnrolProStatus {ACTIVE, ON_LEAVE, COMPLETED, WITHDRAWN}
+enum AcademicStatus {GOOD, PROBATION}
+enum Grade {A, B, C, D, F, I, W}
+-- ======================
+-- CORE CLASSES
+-- ======================
+class Student
+attributes
+		id     : String
+		name          : String
+		email         : String
+		status        : StudentStatus
+    aidCap        : Real
+    balance       : Real 
+-- Derived
+		totalCreditsCompleted : Integer  derived  =   Enrolment.allInstances()
+			->select(e | e.student = self and e.status = EnrolStatus::COMPLETED
+                         and e.grade <> 'F' and e.grade <> 'I' and e.grade <> 'W')
+			->collect(e | e.offering.module.credits)->sum()	  
+--context Student
+--inv cm_TotalCredits:
+--  self.totalCreditsCompleted = self.enrolment 
+--		->select(e | e.status = EnrolStatus::COMPLETED and e.grade >= 'C')
+--		->collect(e | e.offering.module.credits)->sum()
+			
+  --   cumulativeGPA         : Real derived = self.enrolment.gradePoints()*self.totalCreditsCompleted
+		cumulativeGPA : Real derived =  let totalPoints : Real =
+			Enrolment.allInstances()
+				->select(e | e.student = self and e.status = EnrolStatus::COMPLETED
+                           and e.grade <> 'F' and e.grade <> 'I' and e.grade <> 'W')
+				->collect(e | e.offering.module.credits *
+                         (if e.grade = 'A' then 4.0
+                          else if e.grade = 'B' then 3.0
+                          else if e.grade = 'C' then 2.0
+                          else if e.grade = 'D' then 1.0
+                          else 0.0 endif endif endif endif))
+				->sum()
+			in
+				if self.totalCreditsCompleted = 0 then 0.0
+				else totalPoints / self.totalCreditsCompleted
+				endif
+		overallStatus         : AcademicStatus derived = if self.cumulativeGPA >=2.0 then AcademicStatus::GOOD else AcademicStatus::PROBATION endif 
+		curTerm :  AcademicTerm derived= AcademicTerm.allInstances()->any(t | t.isCurTerm)
+
+--   coreCredits : Integer derived = Enrolment.allInstances()
+--        ->select(e | e.student = self and e.status = EnrolStatus::COMPLETED
+--                        and e.grade <> 'F' and e.grade <> 'I' and e.grade <> 'W'
+--                        and e.offering.module.type = CourseType::CORE)
+--        ->collect(e | e.offering.module.credits)->sum()
+--    electiveCredits : Integer derived =  Enrolment.allInstances()
+--        ->select(e | e.student = self and e.status = EnrolStatus::COMPLETED
+--                         and e.grade <> 'F' and e.grade <> 'I' and e.grade <> 'W'
+--                         and e.offering.module.type = CourseType::ELECTIVE)
+--        ->collect(e | e.offering.module.credits)->sum()
+    
+operations
+ -- All enrolments of this student 
+      	enrolments() : Set(Enrolment) = Enrolment.allInstances()->select(e | e.student = self)->asSet()
+
+-- Enrolments in a given academic term 
+	enrolmentsIn(t: AcademicTerm) : Set(Enrolment) = self.enrolments()->select(e | e.offering.term = t)->asSet()
+
+-- Completed enrolments/module 
+	completedEnrolments() : Set(Enrolment) = self.enrolments()->select(e | e.status = EnrolStatus::COMPLETED)->asSet()
+	completedModules() : Set(CourseModule) = self.completedEnrolments() ->select(e | e.grade <> 'F' and e.grade <> 'I' and e.grade <> 'W') ->collect(e | e.offering.module)->asSet()
+
+end
+
+class CourseModule
+attributes
+		code          : String
+		title         : String
+		credits       : Integer
+		tuitionFee    : Real
+		level         : CourseLevel
+		type          : CourseType
+		passingScore  : Real
+    requiredCredits : Integer
+           --for PreCond
+--   requiredGrade: String
+		isCapstone: Boolean
+  --  department: String
+    
+    
+end
+
+class CourseOffering
+attributes
+		id    : Integer
+		schedule      : String
+		room          : String
+		minStudents   : Integer
+		maxStudents   : Integer
+		curEnrollment : Integer derived= Enrolment.allInstances()
+			->select(e | e.offering = self and
+                         (e.status = EnrolStatus::PLANNED or
+                          e.status = EnrolStatus::ACTIVE or
+                          e.status = EnrolStatus::COMPLETED))
+			->size()
+operations 
+	enrolmentCount() : Integer = Enrolment.allInstances()->select(e | e.offering = self and (e.status = EnrolStatus::PLANNED or e.status = EnrolStatus::ACTIVE or e.status = EnrolStatus::COMPLETED))->size() 
+end
+
+class Program
+attributes
+		code          : String
+		programName   : String
+		totalCredits  : Integer 
+		minGPA        : Real 
+		tuitionCap    : Real 
+		maxWithdrawals: Integer 
+		minCoreCredits: Integer 
+		maxElectiveCredits : Integer 
+		maxCreditsPerTerm: Integer
+		minTotalCredits : Integer
+end
+
+class AcademicTerm
+attributes
+		id        : String
+		isCurTerm: Boolean
+		year          : Integer
+		startDate     : String
+		endDate       : String
+    addDeadline   : String  -- (Time) Han dang  ky, tranh dang truoc an
+    dropDeadline  : String  -- (time)
+operations 
+getCurTerm() : AcademicTerm = 
+    AcademicTerm.allInstances()->select(t | t.isCurTerm = true)->any(true)
+
+
+end
+
+class TermRecord
+attributes
+  --test Type5
+		id: String
+		isExemptMinCredits: Boolean
+		scholarshipTotal : Real   -- Học bổng cho từng kỳ (chương trình)
+		gpa		: Real derived =let totalPoints : Real =
+			Enrolment.allInstances()
+				->select(e | e.student.termRecord->includes(self)
+                           and e.offering.term = self.term
+                           and e.grade <> 'F' and e.grade <> 'I' and e.grade <> 'W')
+				->collect(e | e.offering.module.credits *
+                         (if e.grade = 'A' then 4.0
+                          else if e.grade = 'B' then 3.0
+                          else if e.grade = 'C' then 2.0
+                          else if e.grade = 'D' then 1.0
+                          else 0.0 endif endif endif endif))
+				->sum()
+			in
+				if self.termCredits = 0 then 0.0 else totalPoints / self.termCredits endif
+		termCredits     : Integer derived =
+			Enrolment.allInstances()
+				->select(e | e.student.termRecord->includes(self)
+                         and e.offering.term = self.term)
+				->collect(e | e.offering.module.credits)->sum()
+		tuitionTotal    : Real  derived =Enrolment.allInstances()
+				->select(e | e.student.termRecord->includes(self)
+                         and e.offering.term = self.term)
+				->collect(e | e.offering.module.tuitionFee)->sum()
+		withdrawals     : Integer derived=Enrolment.allInstances()
+				->select(e | e.student.termRecord->includes(self)
+                         and e.offering.term = self.term
+                         and e.status = EnrolStatus::WITHDRAWN)
+				->size()
+		academicStatus  : AcademicStatus derived =  if self.gpa >=2.0 then AcademicStatus::GOOD else AcademicStatus::PROBATION endif
+  studySemester : Integer derived =
+  self.student.termRecord
+    ->select(tr | tr.term.startDate < self.term.startDate)
+    ->size() + 1
+  prevSemGpa : Real derived = self.calcPrevSemGpa()
+  operations 
+	prevTerm() : TermRecord =  self.student.termRecord->any(tr | tr.studySemester = self.studySemester - 1)
+  calcPrevSemGpa() : Real =  if self.prevTerm().oclIsUndefined() then 0.0  else self.prevTerm().gpa endif
+
+end
+
+class Instructor
+attributes
+		id  			    : String
+		name          : String
+		email         : String
+		availability  : String
+		workloadLimit : Integer   
+end
+
+-- ======================
+-- ASSOCIATION CLASS
+-- ======================
+
+associationclass Enrolment
+between
+		Student[*] role student
+		CourseOffering[*] role offering
+attributes
+		id        : Integer
+		status    : EnrolStatus
+		grade     : String     
+		attempt   : String
+		withdrawDate: String
+		gradePoints : Real derived = if self.grade = 'A' then 4.0
+			else if self.grade = 'B' then 3.0
+			else if self.grade = 'C' then 2.0
+			else if self.grade = 'D' then 1.0
+			else 0.0 endif endif endif endif
+		isPassed 	  : Boolean derived = if (self.grade <> 'F' and self.grade <> 'I' and self.grade <> 'W') then true else false endif
+    enrolledAt  : String --Thoi diem dang ky (Time constraint)
+operations 
+	module() : CourseModule = self.offering.module 
+	term() : AcademicTerm = self.offering.term 
+	gradePoints() : Real = if self.grade = 'A' then 4.0 else if self.grade = 'B' then 3.0 else if self.grade = 'C' then 2.0 else if self.grade = 'D' then 1.0 else 0.0 endif endif endif endif
+	isPassed() : Boolean = (self.grade <> 'F' and self.grade <> 'I' and self.grade <> 'W')
+--  hasCyclicDependency(module : CourseModule, visited : Set(CourseModule)) : Boolean =
+--  module.prerequisites->exists(prereq |
+--    visited->includes(prereq) or
+--    self.hasCyclicDependency(prereq, visited->including(prereq)))
+end
+associationclass ProgramEnrolment
+between
+		Student[*] role student
+		Program[1] role program
+attributes
+		id    : Integer
+		admissionTerm  : String      -- ví dụ "Fall-2025"
+		status   : EnrolProStatus
+		isActive : Boolean derived = if self.status = EnrolProStatus::ACTIVE then true else false endif
+operations 
+	isActive() : Boolean = self.status = EnrolProStatus::ACTIVE
+end
+
+-- ===============================================
+-- DATA TYPES
+-- ===============================================
+
+dataType Date
+  operations
+    Date(day: Integer, month : Integer, year : Integer)
+    pre: day >= 1 and day <= 31
+    pre: month >= 1 and month <= 12
+end
+
+dataType Time
+  operations
+    Time(hour: Integer, minute: Integer, second: Integer)
+    pre: hour >= 0 and hour < 24
+    pre: minute >= 0 and minute < 60
+    pre: second >= 0 and second < 60
+end
+
+-- ======================
+-- ASSOCIATIONS
+-- ======================
+
+association Offers
+between
+  CourseModule[1] role module
+  CourseOffering[*] role offering
+end
+
+association Prerequisites
+between
+  CourseModule[*] role module
+  CourseModule[*] role prerequisites
+end
+--for preq
+association Corequisites
+between
+  CourseModule[*] role moduleCore
+  CourseModule[*] role corequisites
+end
+association RequiredPreviousCourses
+between
+  CourseModule[*] role modulerePreq
+  CourseModule[*] role requiredPreviousCourses
+end
+association Exclusions
+between
+    CourseModule[*] role moduleEx
+    CourseModule[*] role exclusions
+end
+
+association CourseProgram
+between
+  CourseModule[*] role module
+  Program[1] role program
+end
+
+
+association StudentTerm
+between
+  Student[1] role student
+  TermRecord[*] role termRecord
+end
+
+association TermOffering
+between
+  AcademicTerm[1] role term
+  CourseOffering[*] role offering
+end
+
+association TermRecordTerm
+between
+  TermRecord[*] role termRecord
+  AcademicTerm[1] role term
+end
+association Teaching
+between
+    CourseOffering[*] role offering
+    Instructor[1] role instructor
+end
+
+-- ===============================
+-- CONSTRAINTS
+-- ===============================
+constraints
+
+--================================ 
+-----------SUM CONSTRIANT
+--================================
+
+-- ===============Class: Student
+--1. Equality / Reconciliation
+--a) Khi GRADUATED: tổng CORE đã hoàn tất ≥ minCoreCredits của  Program ACTIVE
+-- (Hoàn tất = e.status = COMPLETED và grade không thuộc {'F','I','W'}; Enrolment.grade là String)
+context Student
+inv cm01_CoreCreditsRequirement:
+  self.status = StudentStatus::GRADUATED implies
+  	self.enrolment ->select(e | e.grade >='C'
+                         and e.offering.module.type = CourseType::CORE)
+        ->collect(e | e.offering.module.credits)->sum()
+        >= self.programEnrolment.program.minCoreCredits 
+    
+-- ================Annotation specification
+--@SumConstraint(
+--	assocCls = 'Enrollment', 
+--	@RolePath(r1='offering', r2='module'),
+--	collect = { 
+--		@AttrCond(
+--			attr='semester',
+--			matchAttr='curSemester'
+--		) 
+--	}, 
+--	sumAttr = 'credits', 
+--	fixAttr = { @RolePath(r1='programEnrolment', r2='program'), attr='minCoreCredits')}
+--)
+ ------------------------------
+ -- b) Total credits ≥ chuẩn khi tốt nghiệp
+context Student
+inv cm02_TotalCreditsRequirement:
+  self.status = StudentStatus::GRADUATED implies
+    self.enrolment
+      ->select(e | e.grade >= 'C')
+      ->collect(e | e.offering.module.credits)->sum()
+    >= self.programEnrolment.program.minTotalCredits
+-- c)  So sánh số liệu: Tổng = core + elective 
+context Student
+inv cm03_ReconcileCoreElectiveBreakdown:
+  let total : Integer =
+    self.enrolment->select(e | e.grade >= 'C')
+      ->collect(e | e.offering.module.credits)->sum()
+  in
+  let core : Integer =
+    self.enrolment
+      ->select(e | e.grade >= 'C' and e.offering.module.type = CourseType::CORE)
+      ->collect(e | e.offering.module.credits)->sum()
+  in
+  let elective : Integer =
+    self.enrolment
+      ->select(e | e.grade >= 'C' and e.offering.module.type = CourseType::ELECTIVE)
+      ->collect(e | e.offering.module.credits)->sum()
+  in
+  total = core + elective
+-- 2) Bounds (Min/Max/Range) áp cho tổng
+--a)core không vượt tổng
+context Student
+inv cm04_CoreWithinTotalBound:
+  let total : Integer =
+    self.enrolment->select(e | e.grade >= 'C')
+      ->collect(e | e.offering.module.credits)->sum()
+  in
+  let core : Integer =
+    self.enrolment
+      ->select(e | e.grade >= 'C' and e.offering.module.type = CourseType::CORE)
+      ->collect(e | e.offering.module.credits)->sum()
+  in
+  core <= total
+--b) Bảo đảm phần tín chỉ tự chọn đủ để đạt minTotalCredits sau khi đã thỏa minCoreCredits.
+context Student
+inv cm05_ElectiveFloorAtGraduation:
+  self.status = StudentStatus::GRADUATED implies (
+    let requiredElectiveCredits : Integer = 
+        self.programEnrolment.program.minTotalCredits - self.programEnrolment.program.minCoreCredits
+    in
+    let actualElectiveCredits : Integer =
+        self.enrolment->select(e | e.isPassed and e.offering.module.type = CourseType::ELECTIVE)
+        ->collect(e | e.offering.module.credits)->sum()
+    in
+    actualElectiveCredits >= requiredElectiveCredits
+	)
+--3) Group-Wise / Relative Constraints 
+-- a) Academic Probation Rules (Common)
+context Student
+inv cm06_AcademicProbationRules:
+  self.overallStatus = AcademicStatus::PROBATION implies
+    self.enrolment->select(e | e.status = EnrolStatus::ACTIVE)
+      ->collect(e | e.offering.module.credits)->sum() <= 12
+  --b) Credit Limit per Term
+context Student
+inv cm07_CurrentTermCreditsLimit:
+    let v : Integer = self.enrolment
+      ->select(e | e.offering.term.isCurTerm = true 
+                and e.status = EnrolStatus::ACTIVE)
+      ->collect(e | e.offering.module.credits)->sum()
+      in v <= self.programEnrolment.program.maxCreditsPerTerm
+
+--c) constraint tracking/monitoring
+	context Student  
+inv cm08_TuitionAffordability:
+  let tuitionDue : Real = self.enrolment
+      ->select(e | e.status = EnrolStatus::ACTIVE or e.status = EnrolStatus::PLANNED)
+      ->collect(e | e.offering.module.tuitionFee)->sum()
+  in
+    tuitionDue <= self.balance + self.aidCap
+
+	
+--==============class Program
+-- 1) Trần học phí theo từng Program cho mọi ProgramEnrolment ACTIVE (theo kỳ hiện tại)
+context Program
+inv cm09_TuitionCapPerCurrentTerm:
+  self.programEnrolment
+    ->select(pe | pe.status = EnrolProStatus::ACTIVE)
+    ->forAll(pe |
+      let curTerm : AcademicTerm = pe.student.curTerm in
+      curTerm <> null implies
+        pe.student.enrolment
+          ->select(e | e.offering.term = curTerm and e.status = EnrolStatus::ACTIVE)
+          ->collect(e | e.offering.module.tuitionFee)->sum()
+        <= self.tuitionCap
+    )
+
+-- 2) Giới hạn tín chỉ tối đa/kỳ theo Program cho mọi ProgramEnrolment ACTIVE (kỳ hiện tại)
+context Program
+inv cm10_MaxCreditsPerCurrentTerm:
+  self.programEnrolment
+    ->select(pe | pe.status = EnrolProStatus::ACTIVE)
+    ->forAll(pe |
+      let curTerm : AcademicTerm = pe.student.curTerm in
+      curTerm <> null implies
+        pe.student.enrolment
+          ->select(e | e.offering.term = curTerm and e.status = EnrolStatus::ACTIVE)
+          ->collect(e | e.offering.module.credits)->sum()
+        <= self.maxCreditsPerTerm
+    )
+
+	
+--==============ProgramEnrolment
+-- 3) Chuẩn tốt nghiệp (tổng & core đã hoàn tất, qua môn)
+context ProgramEnrolment
+inv cm11_GraduationThresholds:
+  (self.student.status = StudentStatus::GRADUATED) implies (
+    let total : Integer =
+      self.student.enrolment
+        ->select(e | e.status = EnrolStatus::COMPLETED and e.grade >= 'C')
+        ->collect(e | e.offering.module.credits)->sum()
+    in
+    let core : Integer =
+      self.student.enrolment
+        ->select(e | e.status = EnrolStatus::COMPLETED and e.grade >= 'C'
+                      and e.offering.module.type = CourseType::CORE)
+        ->collect(e | e.offering.module.credits)->sum()
+    in
+    total >= self.program.minTotalCredits and core >= self.program.minCoreCredits
+  )
+  
+-- 4) Max tín chỉ cho kỳ hiện tại (phạm vi ProgramEnrolment)
+context ProgramEnrolment
+inv cm12_CurrentTermMaxCredits:
+  let curTerm : AcademicTerm = self.student.curTerm in
+  curTerm <> null implies
+    self.student.enrolment
+      ->select(e | e.offering.term = curTerm and e.status = EnrolStatus::ACTIVE)
+      ->collect(e | e.offering.module.credits)->sum()
+    <= self.program.maxCreditsPerTerm
+
+-- 5) Trần học phí cho kỳ hiện tại (phạm vi ProgramEnrolment)
+context ProgramEnrolment
+inv cm13_CurrentTermTuitionCap:
+  let curTerm : AcademicTerm = self.student.curTerm in
+  curTerm <> null implies
+    self.student.enrolment
+      ->select(e | e.offering.term = curTerm and e.status = EnrolStatus::ACTIVE)
+      ->collect(e | e.offering.module.tuitionFee)->sum()
+    <= self.program.tuitionCap
+
+--=======================TermRecord
+-- 6) Tối đa tín chỉ/kỳ (dựa Program.maxCreditsPerTerm)
+context TermRecord
+inv cm14_MaxCreditsPerTerm:
+  self.student.enrolment
+    ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)
+    ->collect(e | e.offering.module.credits)->sum()
+  <= self.student.programEnrolment.program.maxCreditsPerTerm
+
+-- 7) Trần học phí/kỳ (dựa Program.tuitionCap)
+context TermRecord
+inv cm15_TuitionWithinProgramCap:
+  self.student.enrolment
+    ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)
+    ->collect(e | e.offering.module.tuitionFee)->sum()
+  <= self.student.programEnrolment.program.tuitionCap
+
+-- 8) Cân đối core ≤ tổng (trong kỳ)
+context TermRecord
+inv cm16_CoreWithinTotalInTerm:
+  let total : Integer =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)
+      ->collect(e | e.offering.module.credits)->sum()
+  in
+  let core : Integer =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE
+                    and e.offering.module.type = CourseType::CORE)
+      ->collect(e | e.offering.module.credits)->sum()
+  in
+  core <= total
+--This constraint ensures that students with a GPA below 2.5 in the previous semester are allowed to enroll in a maximum of 20 credits.
+context TermRecord
+--inv cm17_LowGPACreditRestriction:
+ -- let isCurTerm : Boolean = self.term.isCurTerm in
+ -- isCurTerm implies (
+ --   let prevSemester : Integer = self.studySemester - 1 in
+ --   let hadLowPrevGPA : Boolean = self.student.termRecord
+  --      ->exists(tr | tr.studySemester = prevSemester 
+   --             and tr.gpa < 2.5) in
+  --  let curCredits : Integer = self.student.enrolment
+  --      ->select(e | e.offering.term = self.term 
+ --           and e.status = EnrolStatus::ACTIVE)
+ --       ->collect(e | e.offering.module.credits)->sum() in
+ --   hadLowPrevGPA implies (curCredits <= 20)
+--  )
+---======================================
+context TermRecord
+inv cm17_LowGPACreditRestriction:
+  self.term.isCurTerm = true implies (
+    self.prevSemGpa < 2.5
+    implies
+      self.student.enrolment
+        ->select(e |
+           e.status = EnrolStatus::ACTIVE and
+           e.offering.term = self.term
+        )
+        ->collect(e | e.offering.module.credits)
+        ->sum() <= 20
+  )
+--context TermRecord
+--inv cm17v3_LowGPACreditRestriction:
+ -- let isCurTerm : Boolean = self.term.isCurTerm in
+--  isCurTerm implies (
+--      let hadLowPrevGPA : Boolean = self.student.termRecord
+--        ->exists(tr | tr.gpa < 2.5) in
+ --   let curCredits : Integer = self.student.enrolment
+ --       ->select(e | e.offering.term = self.term 
+ --           and e.status = EnrolStatus::ACTIVE)
+  --      ->collect(e | e.offering.module.credits)->sum() in
+  --  hadLowPrevGPA implies (curCredits <= 20))
+--=====================================
+--  @SumConstraint(
+--  name     =  'cm17_LowGPACreditRestriction ',
+--  assocCls = @AssocCls(as1 =  'Enrolment '),
+--  rolePath = @RolePath(r1='offering',r2 ='module',r3='term'),
+--  collect  = {
+--      @AttrCond(attr =  'isCurTerm ', matchAttr =  'true '),
+ --     @AttrCond(attr =  'status ',   matchStr  =  'ACTIVE ')
+ --   },
+ -- sumAttr  = 'credits ', 
+ -- fixAttr  ={ @AttrRef(maxLim =  20) },
+ -- ifPart   ={@AttrCond(@RolePath(r1='student',r2 ='termRecord'),
+  --   varFilterAttr = 'prevSemester' -1,
+  --   @AttrCond(attr ='studySemester', matchAttr =varFilterAttr),
+  --   varAttr  ='gpa',
+  --   fixAttr  = { @AttrRef(maxLim =  2.5) } ) }
+--)
+--class TermRecord { ... }
+
+  
+--=======================AcademicTerm
+-- 9) Mọi sinh viên trong kỳ hiện tại không vượt max tín chỉ/kỳ theo Program
+context AcademicTerm
+inv cm18_CurrentTermStudentsRespectMaxCredits:
+  self.isCurTerm = true implies
+    Student.allInstances()->forAll(s |
+      s.enrolment->exists(e | e.offering.term = self) implies
+        s.enrolment
+          ->select(e | e.offering.term = self and e.status = EnrolStatus::ACTIVE)
+          ->collect(e | e.offering.module.credits)->sum()
+        <= s.programEnrolment.program.maxCreditsPerTerm
+    )
+
+-- 10) Mọi sinh viên trong kỳ hiện tại không vượt trần học phí/kỳ theo Program
+context AcademicTerm
+inv cm19_CurrentTermStudentsRespectTuitionCap:
+  self.isCurTerm = true implies
+    Student.allInstances()->forAll(s |
+      s.enrolment->exists(e | e.offering.term = self) implies
+        s.enrolment
+          ->select(e | e.offering.term = self and e.status = EnrolStatus::ACTIVE)
+          ->collect(e | e.offering.module.tuitionFee)->sum()
+        <= s.programEnrolment.program.tuitionCap
+    )
+-- =====================================
+----------Prerequisites
+--=====================================
+-----------Student
+--Chỉ cho đăng ký khi đã thỏa tất cả các tiên quyết. Tiên quyết phải đạt tối thiểu (ví dụ ≥ 'C').
+-- (tuỳ chọn) siết về kỳ hiện tại và ENROLLED cho thống nhất
+context Student
+inv cm20_PrerequisitesSatisfied:
+  self.enrolment->forAll(e |
+    (e.status = EnrolStatus::ENROLLED and e.offering.term = self.curTerm) implies
+      e.offering.module.prerequisites->forAll(pr |
+        self.enrolment->exists(pe |
+          pe.offering.module = pr and
+          pe.status = EnrolStatus::COMPLETED and
+          pe.grade >= 'C'
+        )
+      )
+  )
+
+--Không học đồng thời một môn và môn phụ thuộc trực tiếp vào nó 
+context Student
+inv cm21_ExclusionAndRetakeRules:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+    ->forAll(activeEnrol |
+      -- No exclusion conflicts
+      not activeEnrol.offering.module.exclusions->exists(excludedModule |
+        self.enrolment->exists(conflictEnrol |
+          conflictEnrol.offering.module = excludedModule and
+          ((conflictEnrol.status = EnrolStatus::COMPLETED and conflictEnrol.grade >= 'C') or
+           (conflictEnrol.status = EnrolStatus::ACTIVE and conflictEnrol.offering.term = self.curTerm))
+        )
+      )
+      and
+      -- No retake of passed modules  
+      not self.enrolment->exists(passedEnrol |
+        passedEnrol.status = EnrolStatus::COMPLETED and 
+        passedEnrol.grade >= 'C' and
+        passedEnrol.offering.module = activeEnrol.offering.module
+      )
+    )
+ 
+--Không được đăng ký nếu xung đột với các môn trong danh sách loại trừ (đã qua hoặc đang học kỳ hiện tại).
+context Student 
+inv cm22_Exclusion:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ENROLLED and e.offering.term = self.curTerm)
+    ->forAll(activeEnrol |
+      -- xung đột với môn đã hoàn tất (đạt)
+      not activeEnrol.offering.module.exclusions->exists(exM |
+        self.enrolment->exists(pastEnrol |
+          pastEnrol.offering.module = exM and
+          pastEnrol.status = EnrolStatus::COMPLETED and
+          pastEnrol.grade >= 'C'
+        )
+      )
+      and
+      -- xung đột với các môn đang học cùng kỳ
+      self.enrolment
+        ->select(other | other <> activeEnrol and other.status = EnrolStatus::ENROLLED and other.offering.term = self.curTerm)
+        ->forAll(other | not activeEnrol.offering.module.exclusions->includes(other.offering.module))
+    )
+
+-- Yêu cầu tổng tín chỉ tích luỹ tối thiểu trước khi được học môn nâng cao
+context Student
+inv cm23_MinAccumulatedCreditsForAdvanced:
+  let totalPassedCredits : Integer =
+    self.enrolment
+      ->select(e | e.status = EnrolStatus::COMPLETED and e.grade >= 'C')
+      ->collect(e | e.offering.module.credits)->sum()
+  in
+    self.enrolment
+      ->select(e | e.status = EnrolStatus::ACTIVE)
+      ->forAll(activeEnrol | 
+        activeEnrol.offering.module.requiredCredits > 0 implies
+          totalPassedCredits >= activeEnrol.offering.module.requiredCredits
+      )
+
+--Các corequisite phải đang học đồng thời trong kỳ hiện tại hoặc đã hoàn tất trước đó.
+context Student
+inv cm24_CorequisitesSatisfied:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+    ->forAll(activeEnrol |
+      activeEnrol.offering.module.corequisites->forAll(coreq |
+          self.enrolment->exists(concurrentEnrol |
+          concurrentEnrol.offering.module = coreq and
+          concurrentEnrol.status = EnrolStatus::ACTIVE and
+          concurrentEnrol.offering.term = self.curTerm
+        )
+        or
+        self.enrolment->exists(completedEnrol |
+          completedEnrol.offering.module = coreq and
+          completedEnrol.status = EnrolStatus::COMPLETED and
+          completedEnrol.grade >= 'C'
+        )
+      )
+    )
+
+--Maximum Failed Attempts:
+context Student
+inv cm25_MaxFailedAttempts:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ENROLLED)
+    ->forAll(activeEnrol |
+      self.enrolment
+        ->select(x |
+          x.offering.module = activeEnrol.offering.module and
+          x.status = EnrolStatus::COMPLETED and
+          x.grade = 'F')
+        ->size() < 2
+    )
+
+--GPA Prerequisites:
+context Student
+inv cm26_GPAPrerequisites:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.level = CourseLevel::ADVANCED)
+    ->forAll(advEnrol |
+      self.cumulativeGPA >= 2.5  -- Minimum GPA for advanced modules
+    )
+
+--Không đăng ký trùng Offering (anti–double-booking)
+context Student
+inv cm27_NoDuplicateActiveEnrollment:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+    ->isUnique(e | e.offering)
+
+-- Không retake môn đã qua
+context Student
+inv cm28_NoRegisterCompletedModule:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ENROLLED and e.offering.term = self.curTerm)
+    ->forAll(ae |
+      not self.enrolment
+        ->exists(pe | pe.status = EnrolStatus::COMPLETED and pe.grade >= 'C'
+                       and pe.offering.module = ae.offering.module)
+    )
+
+--================CourseModule
+-- No self prerequisite
+context CourseModule
+inv cm29_NoSelfPrereq:
+  not self.prerequisites->includes(self)
+
+-- No cyclic prerequisite
+context CourseModule
+inv cm30_NoCyclicPrereq:
+  not self.prerequisites->closure(x | x.prerequisites)->includes(self)
+
+-- No self exclusion
+context CourseModule
+inv cm31_NoSelfExclusion:
+  not self.exclusions->includes(self)
+
+-- No self corequisite
+context CourseModule
+inv cm32_NoSelfCorequisite:
+  not self.corequisites->includes(self)
+
+-- Exclusion symmetric (đề xuất giữ)
+context CourseModule
+inv cm33_ExclusionSymmetric:
+  self.exclusions->forAll(excluded |
+    excluded.exclusions->includes(self))
+
+
+--==============CourseOffering
+-- Có mở lớp cho các môn tiên quyết (tối thiểu 1 kỳ nào đó)
+context CourseOffering
+inv cm34_PrereqOfferingsAvailable:
+  self.module.prerequisites->forAll(pr |
+    CourseOffering.allInstances()->exists(prOff | prOff.module = pr)
+  )
+
+-- Có mở lớp corequisite trong cùng kỳ
+context CourseOffering
+inv cm35_CorequisiteOfferingsAvailable:
+  self.module.corequisites->forAll(c |
+    CourseOffering.allInstances()->exists(co |
+      co.module = c and co.term = self.term
+    )
+  )
+
+--===============AcademicTerm
+-- mỗi học phần tiên quyết phải có ít nhất một Offering ở một kỳ kết thúc trước kỳ hiện tại.
+context AcademicTerm
+inv cm36_PrerequisiteOfferingsSequence:
+  (not self.startDate.oclIsUndefined() and not self.endDate.oclIsUndefined()) implies
+    self.offering->forAll(cur |
+      cur.module.prerequisites->forAll(pr |
+        AcademicTerm.allInstances()
+          ->select(t |
+            not t.startDate.oclIsUndefined() and
+            not t.endDate.oclIsUndefined() and
+            t.endDate < self.startDate
+          )
+          ->exists(prev |
+            prev.offering->exists(prOff | prOff.module = pr)
+          )
+      )
+    )
+--============================
+-----SCHEDULE
+--============================
+------Student
+context Student
+inv cm37_NoTimeConflicts:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+    ->forAll(e1 |
+      self.enrolment
+        ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+        ->forAll(e2 |
+          e1 <> e2 implies e1.offering.schedule <> e2.offering.schedule
+        )
+    )
+context Student
+inv cm38_MaxClassSwitchesFirstWeek:
+  Enrolment.allInstances()
+    ->select(e | 
+      e.student = self and
+      e.offering.term = self.curTerm and
+      e.status = EnrolStatus::WITHDRAWN and
+      e.withdrawDate <> null
+    )->size() <= 2
+context Student
+inv cm39_MaxCumulativeClassSwitches:
+  Enrolment.allInstances()
+    ->select(e | 
+      e.student = self and
+      e.offering.term = self.curTerm and
+      e.status = EnrolStatus::WITHDRAWN
+    )->size() <= 5
+
+context Student
+inv cm40_MaxLifetimeClassSwitches:
+  Enrolment.allInstances()
+    ->select(e | e.student = self and e.status = EnrolStatus::WITHDRAWN)
+    ->size() <= 15
+context Student
+inv cm41_MinEnrollmentBeforeWithdrawal:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::WITHDRAWN and e.offering.term = self.curTerm)
+    ->forAll(withdrawnEnrol |
+      withdrawnEnrol.withdrawDate <> null
+    )
+-----CourseOffering
+context CourseOffering
+inv cm42_InstructorNoScheduleConflicts:
+  CourseOffering.allInstances()
+    ->select(other | other.instructor = self.instructor and other.term = self.term and other <> self)
+    ->forAll(other | other.schedule <> self.schedule)
+context CourseOffering
+inv cm43_RoomAvailability:
+  CourseOffering.allInstances()
+    ->select(other | other.room = self.room and other.term = self.term and other <> self)
+    ->forAll(other | other.schedule <> self.schedule)
+context CourseOffering
+inv cm44_ScheduleNotEmpty:
+  self.schedule <> null and self.schedule <> ''
+---------AcademicTerm
+context AcademicTerm
+inv cm45_ValidTermSchedulePeriod:
+  self.offering->forAll(o | o.schedule <> null and o.schedule <> '')
+context AcademicTerm
+inv cm46_MaxOfferingsPerTimeSlot:
+  self.offering
+    ->select(o1 | o1.schedule <> null)
+    ->forAll(o1 |
+      self.offering
+        ->select(o2 | o2.schedule = o1.schedule)
+        ->size() <= 5  -- Max 5 offerings with same schedule
+    )
+----------TermRecord
+context TermRecord
+inv cm47_BalancedScheduleLoad:
+  self.student.enrolment
+    ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)
+    ->collect(e | e.offering.module.credits)->sum() <= 24  -- Max total credits per term
+context TermRecord  
+inv cm48_NoIdenticalSchedules:
+  let activeEnrolments : Set(Enrolment) =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)->asSet() in
+  activeEnrolments->isUnique(e | e.offering.schedule)
+context Program
+inv cm49_CoreCoursesScheduleAvailability:
+  self.module
+    ->select(m | m.type = CourseType::CORE)
+    ->forAll(coreModule |
+      CourseOffering.allInstances()->exists(o | 
+        o.module = coreModule and
+        o.schedule <> null and
+        o.schedule <> ''
+      )
+    )
+---Instructor
+context Instructor
+inv cm50_InstructorAvailabilityMatch:
+  self.offering->forAll(o |
+    self.availability <> null and 
+    o.schedule <> null
+  )
+
+context Instructor
+inv cm51_MaxOfferingsPerTerm:
+  self.offering->select(o | o.term.isCurTerm = true)->size() <= self.workloadLimit
+---Enrolment
+context Enrolment
+inv cm52_LateEnrollmentRestrictions:
+  self.status = EnrolStatus::ACTIVE implies
+    (self.offering.module.isCapstone = false or 
+     self.offering.term.isCurTerm = true)
+
+context Enrolment
+inv cm53_RepeatedModuleScheduleConsistency:
+  let previousFailures : Set(Enrolment) =
+    Enrolment.allInstances()
+      ->select(e | 
+        e.student = self.student and 
+        e.offering.module = self.offering.module and 
+        e.status = EnrolStatus::COMPLETED and
+        e.grade = 'F'
+      )->asSet() in
+  previousFailures->notEmpty() implies
+    self.offering.term <> previousFailures->any(true).offering.term
+
+context CourseOffering
+inv cm54_ValidScheduleFormat:
+  self.schedule.size() >= 3 
+ --====================================
+ ---------------ELIGIBILITY
+ --====================================
+ -----------Student
+context Student
+inv cm55_NoviceAdvancedResourceRestriction:
+  let completedCredits : Integer = self.totalCreditsCompleted in
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.level = CourseLevel::ADVANCED)
+    ->forAll(advEnrol |
+      completedCredits >= 30  
+    )
+
+
+context Student  
+inv cm56_RestrictedModuleAccess:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.isCapstone = true)
+    ->forAll(capstoneEnrol |
+      self.overallStatus = AcademicStatus::GOOD  -- No probation students for capstone
+    )
+context Student
+inv cm57_OverloadRequiresHighPerformance:
+  let currentCredits : Integer =
+    self.enrolment
+      ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+      ->collect(e | e.offering.module.credits)->sum() in
+  (currentCredits > self.programEnrolment.program.maxCreditsPerTerm) implies
+    (self.cumulativeGPA >= 3.5 and self.overallStatus = AcademicStatus::GOOD)
+
+-- Nếu muốn giữ theo credits:
+context Student
+inv cm58_ExtraCapacityEligibility:
+  let curCredits : Integer =
+    self.enrolment->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+                   ->collect(e | e.offering.module.credits)->sum()
+  in
+  (curCredits > self.programEnrolment.program.maxCreditsPerTerm) implies self.cumulativeGPA >= 3.0
+
+-- Định nghĩa danh sách modules rõ ràng
+context Student
+inv cm59_ThesisEligibility_Simple:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE)
+    ->select(e | 
+      e.offering.module.code = 'THESIS' or
+      e.offering.module.code = 'RESEARCH' or
+      e.offering.module.code = 'CAPSTONE')
+    ->forAll(thesisEnrol |
+      self.totalCreditsCompleted >= self.programEnrolment.program.minTotalCredits * 0.75
+    )
+
+context Student
+inv cm60_InternshipBeforeThesis_Simple:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE)
+    ->select(e | e.offering.module.code = 'THESIS')
+    ->forAll(thesisEnrol |
+      self.enrolment->exists(internshipEnrol |
+        internshipEnrol.offering.module.code = 'INTERNSHIP' and
+        internshipEnrol.status = EnrolStatus::COMPLETED and
+        internshipEnrol.grade >= 'C'
+      )
+    )
+
+context Student
+inv cm61_BasicBeforeAdvancedLevel:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.level = CourseLevel::ADVANCED)
+    ->forAll(advEnrol |
+      let basicCredits : Integer =
+        self.enrolment
+          ->select(e | e.status = EnrolStatus::COMPLETED and 
+                       e.grade >= 'C' and 
+                       e.offering.module.level = CourseLevel::BASIC)
+          ->collect(e | e.offering.module.credits)->sum() in
+      basicCredits >= 45  -- Must complete 45 basic credits first
+    )
+context Student
+inv cm62_FinancialAidEligibility:
+  self.aidCap > 0.0 implies
+    (self.cumulativeGPA >= 2.0 and 
+     self.overallStatus = AcademicStatus::GOOD and
+     self.status <> StudentStatus::SUSPENDED)
+
+context Student
+inv cm63_GraduationEligibility:
+  self.status = StudentStatus::GRADUATED implies
+    (self.totalCreditsCompleted >= self.programEnrolment.program.minTotalCredits and
+     self.cumulativeGPA >= self.programEnrolment.program.minGPA and
+     self.enrolment->select(e | e.status = EnrolStatus::WITHDRAWN)->size() 
+       <= self.programEnrolment.program.maxWithdrawals)
+
+--Capstone gate theo tập môn bắt buộc
+context Student
+inv cm64_CapstoneRequiredSetCompleted:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE 
+                  and e.offering.term = self.curTerm
+                  and e.offering.module.isCapstone = true)
+    ->forAll(cap |
+      cap.offering.module.requiredPreviousCourses->forAll(req |
+        self.enrolment->exists(done |
+          done.offering.module = req and
+          done.status = EnrolStatus::COMPLETED and
+          done.grade >= 'C'
+        )
+      )
+    )
+--Retake limit theo số lần F
+-- Không cho ENROLLED nếu đã có >= 2 lần COMPLETED với grade = 'F' cho cùng module
+context Student
+inv cm65_RetakeAfterFailsLimit:
+  let N : Integer = 2 in
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ENROLLED and e.offering.term = self.curTerm)
+    ->forAll(ae |
+      self.enrolment
+        ->select(x | x.offering.module = ae.offering.module and
+                     x.status = EnrolStatus::COMPLETED and x.grade = 'F')
+        ->size() < N
+    )
+
+----------Program
+context Program
+inv cm66_ProgramAdmissionRequirements:
+  ProgramEnrolment.allInstances()
+    ->select(pe | pe.program = self and pe.status = EnrolProStatus::ACTIVE)
+    ->forAll(pe |
+      pe.student.cumulativeGPA >= self.minGPA or
+      pe.student.totalCreditsCompleted = 0  -- New students exempt
+    )
+
+----------CourseOffering
+
+context CourseOffering
+inv cm67_OfferingCapacityEligibility:
+  Enrolment.allInstances()
+    ->select(e | e.offering = self and e.status = EnrolStatus::ACTIVE)
+    ->forAll(activeEnrol |
+      activeEnrol.student.overallStatus = AcademicStatus::GOOD or
+      self.curEnrollment <= self.minStudents  -- Allow probation students if under-enrolled
+    )
+
+-----------TermRecord
+context TermRecord
+inv cm68_TermAcademicStanding:
+  self.gpa < 2.0 implies
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)
+      ->collect(e | e.offering.module.credits)->sum() <= 12  -- Reduced load for low GPA
+
+context TermRecord
+inv cm69_ScholarshipEligibility:
+  self.scholarshipTotal > 0.0 implies
+    (self.gpa >= 3.0 and self.termCredits >= 12)
+-----------ProgramEnrolment
+context ProgramEnrolment
+inv cm70_ActiveEnrollmentRequirements:
+  self.status = EnrolProStatus::ACTIVE implies
+    (self.student.status <> StudentStatus::SUSPENDED and
+     self.student.balance >= 0.0)
+
+context TermRecord
+inv cm71_MaximumWithdrawals:
+  self.withdrawals <= 2  -- Maximum 2 withdrawals per term
+
+context ProgramEnrolment
+inv cm72_ProgramCompletionEligibility:
+  self.status = EnrolProStatus::COMPLETED implies(
+    let coreCreditsCompleted : Integer =
+      self.student.enrolment
+        ->select(e | e.status = EnrolStatus::COMPLETED and 
+                     e.grade >= 'C' and 
+                     e.offering.module.type = CourseType::CORE)
+        ->collect(e | e.offering.module.credits)->sum() in
+    coreCreditsCompleted >= self.program.minCoreCredits)
+-------------CourseModule
+context CourseModule
+inv cm73_CapstoneModuleEligibility:
+  self.isCapstone = true implies
+    self.requiredCredits >= 90  -- Must have 90+ credits before capstone
+
+----------------Enrolment
+context Enrolment
+inv cm74_RetakeEligibility:
+  let previousAttempts : Integer =
+    Enrolment.allInstances()
+      ->select(e | e.student = self.student and 
+                   e.offering.module = self.offering.module and
+                   e.status = EnrolStatus::COMPLETED)
+      ->size() in
+  (previousAttempts > 0 and self.status = EnrolStatus::ACTIVE) implies
+    self.student.cumulativeGPA >= 2.0  -- Need decent GPA for retakes
+
+context Enrolment
+inv cm75_WithdrawalEligibility:
+  self.status = EnrolStatus::WITHDRAWN implies
+    not self.withdrawDate.oclIsUndefined() and
+    self.student.enrolment
+      ->select(e | e.status = EnrolStatus::WITHDRAWN and e.offering.term = self.offering.term)
+      ->size() <= 2
+
+--=======================================================
+-------------------RETEAKE
+--=======================================================
+----------------Student
+context Student
+inv cm76_NoRetakePassedCourses:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+    ->forAll(activeEnrol |
+      not self.enrolment->exists(passedEnrol |
+        passedEnrol.offering.module = activeEnrol.offering.module and
+        passedEnrol.status = EnrolStatus::COMPLETED and
+        passedEnrol.grade >= 'C'
+      )
+    )
+context Student
+inv cm77_MaxAttemptsCourse:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE)  -- hoặc ENROLLED
+    ->forAll(ae |
+      Enrolment.allInstances()
+        ->select(x |
+          x.student = self and
+          x.offering.module = ae.offering.module and
+          x <> ae and
+          (x.status = EnrolStatus::COMPLETED or x.status = EnrolStatus::ACTIVE)
+        )->size() < 3   -- < 3 attempts trước đó ⇒ cho phép active hiện tại là attempt #3
+    )
+context Student
+inv cm78_MaxFailuresPerCourse:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE)
+    ->forAll(ae |
+      self.enrolment
+        ->select(x | x.offering.module = ae.offering.module and
+                   x.status = EnrolStatus::COMPLETED and x.grade = 'F')
+        ->size() < 2
+    )
+
+context Student
+inv cm79_LowGPARetakeRequirement:
+  self.cumulativeGPA < 2.0 implies(
+    let recentFailures : Set(Enrolment) =
+      self.enrolment
+        ->select(e | 
+          e.status = EnrolStatus::COMPLETED and
+          (e.grade = 'F' or e.grade = 'D'))
+        ->asSet() in
+    recentFailures->forAll(failure |
+      self.enrolment->exists(improvement |
+        improvement.offering.module = failure.offering.module and
+        improvement <> failure and
+        (improvement.status = EnrolStatus::ACTIVE or 
+         (improvement.status = EnrolStatus::COMPLETED and improvement.grade >= 'C'))
+      ))
+    )
+------------CourseModule
+context CourseModule
+inv cm80_CoreModuleRetakePolicy:
+  self.type = CourseType::CORE implies
+    Student.allInstances()->forAll(student |
+      let attempts : Integer =
+        student.enrolment
+          ->select(e | e.offering.module = self)
+          ->size()
+      in attempts <= 4
+    )
+
+
+context CourseModule
+inv cm81_CapstoneRetakeRestriction:
+  self.isCapstone = true implies
+    Student.allInstances()->forAll(student |
+      let attempts : Integer =
+        student.enrolment->select(e | e.offering.module = self)->size() in
+      attempts <= 2
+    )
+-----------Enrolment
+context Enrolment
+inv cm82_ValidRetakeAttempt:
+  let previousAttempts : Set(Enrolment) =
+    Enrolment.allInstances()
+      ->select(e | 
+        e.student = self.student and
+        e.offering.module = self.offering.module and
+        e <> self)
+      ->asSet() in
+  previousAttempts->notEmpty() implies
+    previousAttempts->exists(prev | 
+      prev.status = EnrolStatus::COMPLETED and
+      (prev.grade = 'F' or prev.grade = 'D'))
+
+context Enrolment  
+inv cm83_RetakeTimingRestriction:
+  let previousAttempts : Set(Enrolment) =
+    Enrolment.allInstances()
+      ->select(e | 
+        e.student = self.student and
+        e.offering.module = self.offering.module and
+        e.status = EnrolStatus::COMPLETED and
+        e.grade = 'F' and
+        e <> self)
+      ->asSet() in
+  previousAttempts->notEmpty() implies
+    previousAttempts->forAll(prev |
+      not (prev.offering.term = self.offering.term)
+    )
+
+
+----------TermRecord
+context TermRecord
+inv cm84_MaxRetakesPerTerm:
+  let retakesThisTerm : Integer =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)
+      ->select(activeEnrol |
+        self.student.enrolment->exists(prev |
+          prev.offering.module = activeEnrol.offering.module and
+          prev.status = EnrolStatus::COMPLETED and
+          prev <> activeEnrol))
+      ->size()
+  in retakesThisTerm <= 3
+
+--===============================
+----------------------size
+--===============================
+--------------Student
+context Student
+inv cm85_MaximumCourseLoad:
+  let currentCourses : Integer =
+    self.enrolment
+      ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+      ->size() in
+  currentCourses <= 7  -- Maximum 7 courses per term
+
+context Student
+inv cm86_MinimumFullTimeLoad:
+  let currentCredits : Integer =
+    self.enrolment
+      ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+      ->collect(e | e.offering.module.credits)->sum() in
+  (self.status = StudentStatus::ENROLLED) implies
+    currentCredits >= 12  -- Full-time minimum 12 credits
+
+context Student
+inv cm87_OverloadApprovalRequired:
+  let currentCredits : Integer =
+    self.enrolment
+      ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+      ->collect(e | e.offering.module.credits)->sum() in
+  (currentCredits > self.programEnrolment.program.maxCreditsPerTerm) implies
+    self.cumulativeGPA >= 3.5  -- High GPA required for overload
+
+--------------CourseOffering
+context CourseOffering
+inv cm88_MinimumEnrollmentToRun:
+  let activeEnrollments : Integer =
+    Enrolment.allInstances()
+      ->select(e | e.offering = self and e.status = EnrolStatus::ACTIVE)
+      ->size() in
+  activeEnrollments >= self.minStudents or
+  self.module.type = CourseType::CORE  -- Core courses exempt from minimum
+
+context CourseOffering
+inv cm89_CancellationThreshold:
+  (self.term.isCurTerm = true and self.module.type = CourseType::ELECTIVE) implies
+    Enrolment.allInstances()
+      ->select(e | e.offering = self and (e.status = EnrolStatus::ACTIVE or e.status = EnrolStatus::PLANNED))
+      ->size() >= self.minStudents
+
+context CourseOffering
+inv cm90_MaximumCapacityLimit:
+  let totalEnrollments : Integer =
+    Enrolment.allInstances()
+      ->select(e | e.offering = self and 
+                   (e.status = EnrolStatus::ACTIVE or e.status = EnrolStatus::PLANNED))
+      ->size() in
+  totalEnrollments <= self.maxStudents
+
+context CourseOffering
+inv cm91_OversubscriptionControl:
+  let cap : Integer = self.maxStudents in
+  self.curEnrollment <= cap or
+  (self.module.type = CourseType::CORE and self.curEnrollment <= cap + (cap div 10))
+
+context CourseOffering
+inv cm92_InstructorStudentRatio:
+  let enrolledStudents : Integer =
+    Enrolment.allInstances()
+      ->select(e | e.offering = self and e.status = EnrolStatus::ACTIVE)
+      ->size() in
+  (self.module.level = CourseLevel::ADVANCED) implies
+    enrolledStudents <= 25  -- Advanced courses limited to 25 students
+
+context CourseOffering
+inv cm93_LabCapacityRestriction:
+  (self.module.title = 'Lab' or self.room = 'Lab') implies
+    self.maxStudents <= 20  -- Lab sessions limited by equipment
+--------------Program
+context Program
+inv cm94_CoreCourseOfferingRequirement:
+  let coreModules : Set(CourseModule) = self.module->select(m | m.type = CourseType::CORE) in
+  coreModules->forAll(coreModule |
+    CourseOffering.allInstances()
+      ->select(o | o.module = coreModule and o.term.isCurTerm = true)
+      ->size() >= 1  -- Each core module must have at least 1 offering per term
+  )
+--------------AcademicTerm
+context AcademicTerm
+inv cm95_MinimumOfferingsPerTerm:
+  self.offering->size() >= 20  -- Minimum 20 course offerings per term
+
+context AcademicTerm
+inv cm96_MaximumOfferingsPerTerm:
+  self.offering->size() <= 200  -- Maximum 200 course offerings per term
+
+-------------Instructor
+context Instructor
+inv cm97_MaximumClassSize:
+  self.offering->forAll(o |
+    let studentCount : Integer =
+      Enrolment.allInstances()
+        ->select(e | e.offering = o and e.status = EnrolStatus::ACTIVE)
+        ->size() in
+    studentCount <= 40  -- Maximum 40 students per class per instructor
+  )
+
+context Instructor
+inv cm98_TotalStudentLoad:
+  let totalStudents : Integer =
+    self.offering
+      ->select(o | o.term.isCurTerm = true)
+      ->collect(o | 
+        Enrolment.allInstances()
+          ->select(e | e.offering = o and e.status = EnrolStatus::ACTIVE)
+          ->size())
+      ->sum() in
+  totalStudents <= 150  -- Maximum 150 total students per term per instructor
+
+context Instructor
+inv cm99_MinimumClassViability:
+  self.offering
+    ->select(o | o.term.isCurTerm = true)
+    ->forAll(currentOffering |
+      let enrollment : Integer =
+        Enrolment.allInstances()
+          ->select(e | e.offering = currentOffering and e.status = EnrolStatus::ACTIVE)
+          ->size() in
+      enrollment >= 5 or currentOffering.module.type = CourseType::CORE
+    )
+-----------------TermRecord
+context TermRecord
+inv cm100_MinimumProgressRate:
+  let completed : Integer =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::COMPLETED and e.grade >= 'C')
+      ->size() in
+  let attempted : Integer =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::COMPLETED)
+      ->size() in
+  attempted > 0 implies (completed / attempted) >= 0.67
+
+
+------------ProgramEnrolment
+context ProgramEnrolment
+inv cm101_MinimumAnnualProgress:
+  let yearsEnrolled : Integer = 
+    AcademicTerm.allInstances()
+      ->select(t | 
+        self.student.enrolment->exists(e | e.offering.term = t))
+      ->collect(t | t.year)->asSet()->size() in
+  (yearsEnrolled > 1) implies
+    self.student.totalCreditsCompleted >= (yearsEnrolled * 24)  -- 24 credits per year minimum
+
+context ProgramEnrolment
+inv cm102_MaximumTimeToCompletion:
+  self.status = EnrolProStatus::ACTIVE implies (
+    AcademicTerm.allInstances()->exists(cur | cur.isCurTerm = true) and
+    AcademicTerm.allInstances()->exists(adm | adm.id = self.admissionTerm) implies(
+      let currentYear : Integer = AcademicTerm.allInstances()->select(t | t.isCurTerm = true)->any(true).year in
+      let admission : AcademicTerm = AcademicTerm.allInstances()->select(t | t.id = self.admissionTerm)->any(true) in
+      (currentYear - admission.year)) <= 6
+  )
+
+--================================
+-----------TIME
+--===============================
+--------Student
+context Student
+inv cm103_ConsecutiveProbationLimit:
+  self.termRecord
+    ->select(tr | tr.gpa < 2.0)
+    ->collect(tr | tr.term.year)->asSet()->size() <= 2
+
+context Student  
+inv cm104_MaximumWithdrawalsLifetime:
+  self.enrolment->select(e | e.status = EnrolStatus::WITHDRAWN)->size() <= 8
+
+context Student
+inv cm105_MaximumProgramDuration:
+  self.termRecord->collect(tr | tr.term.year)->asSet()->size() <= 8
+
+-----------AcademicTerm
+context AcademicTerm
+inv cm106_ValidTermDuration:
+  self.startDate < self.endDate
+
+context AcademicTerm
+inv cm107_OnlyOneCurrentTerm:
+  AcademicTerm.allInstances()->select(t | t.isCurTerm = true)->size() <= 1
+
+context AcademicTerm
+inv cm108_AddDeadlineWithinTerm:
+  self.addDeadline <> null and self.startDate <> null and self.endDate <> null implies
+    (self.startDate <= self.addDeadline and self.addDeadline <= self.endDate)
+
+context AcademicTerm
+inv cm109_DropDeadlineAfterAdd:
+  self.addDeadline <> null and self.dropDeadline <> null implies
+    self.addDeadline <= self.dropDeadline
+------------Enrollment
+
+context Enrolment
+inv cm110_RegisterBeforeAddDeadline:
+  (self.status = EnrolStatus::ACTIVE or self.status = EnrolStatus::PLANNED) implies
+    (self.enrolledAt <> null and
+     self.offering.term.addDeadline <> null and
+     self.enrolledAt <= self.offering.term.addDeadline)
+
+context Enrolment
+inv cm111_WithdrawBeforeDropDeadline:
+  self.status = EnrolStatus::WITHDRAWN implies
+    (self.withdrawDate <> null and
+     self.offering.term.dropDeadline <> null and
+     self.withdrawDate <= self.offering.term.dropDeadline)
+
+context Enrolment
+inv cm112_ActiveInCurrentTerm:
+  (self.status = EnrolStatus::ACTIVE) implies
+    (self.offering.term.isCurTerm = true)
+
+-----------termRecord
+context TermRecord
+inv cm113_CurrentTermMinimumProgress:
+  self.term.isCurTerm = true implies self.termCredits >= 6
+
+  
+--================================
+-------------SUMPRODUC
+--================================
+-----------------Student
+
+context Student
+inv cm114_WeightedGPACalculation:
+  let calculatedGPA : Real =
+    if self.totalCreditsCompleted = 0 then 0.0
+    else
+      self.enrolment
+        ->select(e | e.status = EnrolStatus::COMPLETED and e.grade <> 'F' and e.grade <> 'I' and e.grade <> 'W')
+        ->collect(e | e.offering.module.credits * e.gradePoints)
+        ->sum() / self.totalCreditsCompleted
+    endif in
+  (self.cumulativeGPA - calculatedGPA).abs() < 0.01
+--==================
+--@SumConstraint(
+--  name     =  'cm17_LowGPACreditRestriction ',
+ -- assocCls = @AssocCls(as1 =  'Enrolment '),
+ -- rolePath = @RolePath(r1='offering',r2 ='module',r3='term'),
+ -- collect  = {
+ --     @AttrCond(attr =  'grade', minLim =  'C'),
+  --    @AttrCond(attr =  'status', matchStr  =  'COMPLETED')
+ --   },
+ -- sumAttr  = 'credits ', 
+--  fixAttr  ={ @AttrRef(maxLim =  20) },
+ -- ifPart   ={@RolePath(r1='student',r2 ='termRecord'),
+ --           varFilterAttr = 'prevSemester' -1,
+ --           @AttrCond(attr ='studySemester', matchVal = varFilterAttr),
+  --          @AttrCond(attr = varFilterAttr, maxLim =2.5) }
+--)
+--==================
+context Student
+inv cm115_AcademicStandingConsistency:
+  let derivedStatus : AcademicStatus =
+    if self.cumulativeGPA >= 2.0 then AcademicStatus::GOOD 
+    else AcademicStatus::PROBATION endif in
+  self.overallStatus = derivedStatus
+context Student
+inv cm116_CompletionRateValidation:
+  let completionRate : Real =
+    if self.programEnrolment.program.minTotalCredits = 0 then 0.0
+    else self.totalCreditsCompleted / self.programEnrolment.program.minTotalCredits
+    endif in
+  (self.status = StudentStatus::GRADUATED) implies (completionRate >= 1.0)
+
+--------TermRecord
+context TermRecord
+inv cm117_TermGPAConsistency:
+  let calculatedTermGPA : Real =
+    if self.termCredits = 0 then 0.0
+    else
+      self.student.enrolment
+        ->select(e | e.offering.term = self.term and e.status = EnrolStatus::COMPLETED and 
+                     e.grade <> 'F' and e.grade <> 'I' and e.grade <> 'W')
+        ->collect(e | e.offering.module.credits * e.gradePoints)
+        ->sum() / self.termCredits
+    endif in
+  (self.gpa - calculatedTermGPA).abs() < 0.01
+
+context TermRecord
+inv cm118_TermCreditsConsistency:
+  let calculatedCredits : Integer =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term)
+      ->collect(e | e.offering.module.credits)->sum()
+  in self.termCredits = calculatedCredits
+
+
+context TermRecord
+inv cm119_TuitionTotalConsistency:
+  let calculatedTuition : Real =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term)
+      ->collect(e | e.offering.module.tuitionFee)->sum()
+  in self.tuitionTotal = calculatedTuition
+
+context TermRecord
+inv cm120_AcademicStatusConsistency:
+  let derivedAcademicStatus : AcademicStatus =
+    if self.gpa >= 2.0 then AcademicStatus::GOOD 
+    else AcademicStatus::PROBATION endif in
+  self.academicStatus = derivedAcademicStatus
+
+context TermRecord
+inv cm121_WithdrawalsCountConsistency:
+  let calculatedWithdrawals : Integer =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::WITHDRAWN)
+      ->size() in
+  self.withdrawals = calculatedWithdrawals
+-------CourseOffering
+
+context CourseOffering
+inv cm122_RemainingCapacityValid:
+  let remainingCapacity : Integer = self.maxStudents - self.curEnrollment in
+  remainingCapacity >= 0
+
+context CourseOffering
+inv cm123_CapacityUtilizationRate:
+  let utilizationRate : Real =
+    if self.maxStudents = 0 then 0.0
+    else self.curEnrollment / self.maxStudents endif in
+  (utilizationRate > 1.0) implies
+    self.module.type = CourseType::CORE  -- Only core courses can exceed capacity
+----------Program
+context Program
+inv cm124_CreditDistributionBalance:
+  let totalCoreCredits : Integer =
+    self.module->select(m | m.type = CourseType::CORE)->collect(m | m.credits)->sum() in
+  let totalElectiveCredits : Integer =
+    self.module->select(m | m.type = CourseType::ELECTIVE)->collect(m | m.credits)->sum() in
+  (totalCoreCredits >= self.minCoreCredits) and 
+  (totalElectiveCredits >= self.maxElectiveCredits)
+----------Enrolment
+context Enrolment
+inv cm125_GradePointsConsistency:
+  let derivedGradePoints : Real =
+    if self.grade = 'A' then 4.0
+    else if self.grade = 'B' then 3.0
+    else if self.grade = 'C' then 2.0
+    else if self.grade = 'D' then 1.0
+    else 0.0 endif endif endif endif in
+  self.gradePoints = derivedGradePoints
+
+context Enrolment
+inv cm126_PassedStatusConsistency:
+  let derivedPassed : Boolean =
+    (self.grade <> 'F' and self.grade <> 'I' and self.grade <> 'W' and 
+     self.grade <> null and self.grade <> '') in
+  self.isPassed = derivedPassed
+
+---------- ProgramEnrolment
+context ProgramEnrolment
+inv cm127_CompletionRequirementsMet:
+  let coreCreditsCompleted : Integer =
+    self.student.enrolment
+      ->select(e | e.status = EnrolStatus::COMPLETED and e.grade >= 'C' and
+                   e.offering.module.type = CourseType::CORE)
+      ->collect(e | e.offering.module.credits)->sum() in
+  let totalCreditsCompleted : Integer = self.student.totalCreditsCompleted in
+  (self.status = EnrolProStatus::COMPLETED) implies
+    (coreCreditsCompleted >= self.program.minCoreCredits and
+     totalCreditsCompleted >= self.program.minTotalCredits)
+------------Instructor
+context Instructor
+inv cm128_CurrentWorkloadConsistency:
+  let currentWorkload : Integer =
+    self.offering->select(o | o.term.isCurTerm = true)->size() in
+  currentWorkload <= self.workloadLimit
+
+context Instructor
+inv cm129_StudentTeachingLoad:
+  let totalCurrentStudents : Integer =
+    self.offering
+      ->select(o | o.term.isCurTerm = true)
+      ->collect(o | o.curEnrollment)->sum() in
+  totalCurrentStudents <= (self.workloadLimit * 30)  -- Derived capacity limit
+--===================================
+-----------STATUS CONSTRAINTS
+--==================================
+  
+-- 1) Financial hold: âm số dư ⇒ không được ACTIVE trong kỳ hiện tại, và PE không được ACTIVE
+context Student
+inv cm130_FinancialHoldBlocksActivation:
+  self.balance < 0.0 implies
+    ( self.enrolment
+        ->forAll(e | not (e.offering.term.isCurTerm = true and e.status = EnrolStatus::ACTIVE))
+      and
+      ProgramEnrolment.allInstances()
+        ->select(pe | pe.student = self)
+        ->forAll(pe | pe.status <> EnrolProStatus::ACTIVE)
+    )
+
+-- 2) Probation ⇒ giới hạn tải (đã quen thuộc trong SIS)
+context Student
+inv cm131_ProbationLoadCap:
+  self.overallStatus = AcademicStatus::PROBATION implies
+    self.enrolment
+      ->select(e | e.offering.term.isCurTerm = true and e.status = EnrolStatus::ACTIVE)
+      ->collect(e | e.offering.module.credits)->sum() <= 12
+
+-- 3) Suspended ⇒ không có ACTIVE/PLANNED trong kỳ hiện tại
+context Student
+inv cm132_SuspendedBlocksCurrentTermRegistrations:
+  self.status = StudentStatus::SUSPENDED implies
+    self.enrolment
+      ->forAll(e | not (e.offering.term.isCurTerm = true and
+                        (e.status = EnrolStatus::ACTIVE or e.status = EnrolStatus::PLANNED)))
+
+-- 4) Graduated ⇒ không còn ACTIVE/PLANNED (bất kỳ kỳ)
+context Student
+inv cm133_GraduatedHasNoActiveOrPlanned:
+  self.status = StudentStatus::GRADUATED implies
+    self.enrolment
+      ->forAll(e | e.status <> EnrolStatus::ACTIVE and e.status <> EnrolStatus::PLANNED)
+
+-- 5) ACTIVE chỉ khi student không bị hold tài chính (>= 0) và không bị SUSPENDED
+context Enrolment
+inv cm134_ActiveRequiresGoodStandingAndNoDebt:
+  self.status = EnrolStatus::ACTIVE implies
+    (self.student.balance >= 0.0 and self.student.status <> StudentStatus::SUSPENDED)
+
+-- 6) ACTIVE chỉ khi có ít nhất một ProgramEnrolment ACTIVE
+context Enrolment
+inv cm135_ActiveRequiresActiveProgramEnrolment:
+  self.status = EnrolStatus::ACTIVE implies
+    ProgramEnrolment.allInstances()
+      ->exists(pe | pe.student = self.student and pe.status = EnrolProStatus::ACTIVE)
+
+-- 7) Hoàn tất không thuộc kỳ hiện tại (quy tắc thời gian thực tế)
+context Enrolment
+inv cm136_CompletedNotInCurrentTerm:
+  self.status = EnrolStatus::COMPLETED implies
+    (self.offering.term.isCurTerm = false)
+-- 8) Học bổng chỉ áp dụng khi standing tốt và tải đủ (rất phổ biến)
+context TermRecord
+inv cm137_ScholarshipRequiresGoodStandingAndFullLoad:
+  self.scholarshipTotal > 0.0 implies
+    (self.academicStatus = AcademicStatus::GOOD and self.termCredits >= 12)
+
+-- 9) Kỳ trước GPA < 2.5 ⇒ kỳ hiện tại ≤ 20 credits (đã chốt logic “previous semester”)
+context TermRecord
+inv cm138_LowGPAPrevLimitsCurrentCredits:
+  let currentTerm : AcademicTerm = self.term in
+  currentTerm.isCurTerm implies (
+    self.student.termRecord
+      ->exists(pr | pr.studySemester = self.studySemester - 1 and pr.gpa < 2.5)
+    implies
+      self.student.enrolment
+        ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = currentTerm)
+        ->collect(e | e.offering.module.credits)->sum() <= 20
+  )
+-- 10) PE ACTIVE yêu cầu student không âm số dư và standing tốt
+context ProgramEnrolment
+inv cm139_ActiveEnrollmentConsistency:
+  self.status = EnrolProStatus::ACTIVE implies
+    (self.student.balance >= 0.0 and self.student.overallStatus = AcademicStatus::GOOD)
+
+-- 11) Student GRADUATED ⇒ PE không thể ACTIVE
+context ProgramEnrolment
+inv cm140_NoActivePEAfterGraduation:
+  self.student.status = StudentStatus::GRADUATED implies
+    self.status <> EnrolProStatus::ACTIVE
+-- 12) current enrollment phải khớp dữ liệu Enrolment (tính nhất quán trạng thái)
+context CourseOffering
+inv cm141_CurrentEnrollmentConsistency:
+  self.curEnrollment =
+    Enrolment.allInstances()
+      ->select(e | e.offering = self and
+                    (e.status = EnrolStatus::PLANNED or
+                     e.status = EnrolStatus::ACTIVE or
+                     e.status = EnrolStatus::COMPLETED))
+      ->size()
+
+-- 14) Kỳ học hợp lệ theo thời gian (start < end)
+context AcademicTerm
+inv cm142_ValidDates:
+  self.startDate < self.endDate
+--=====================================
+--------------structural
+--=====================================
+-- Khóa duy nhất
+context Student
+inv cm143_UniqueStudentId:
+  Student.allInstances()->isUnique(s | s.id)
+
+context CourseModule
+inv cm144_UniqueModuleCode:
+  CourseModule.allInstances()->isUnique(m | m.code)
+
+context Program
+inv cm145_UniqueProgramCode:
+  Program.allInstances()->isUnique(p | p.code)
+
+context CourseOffering
+inv cm146_UniqueOfferingId:
+  CourseOffering.allInstances()->isUnique(o | o.id)
+
+context AcademicTerm
+inv cm147_UniqueTermId:
+  AcademicTerm.allInstances()->isUnique(t | t.id)
+
+context Instructor
+inv cm148_UniqueInstructorId:
+  Instructor.allInstances()->isUnique(i | i.id)
+
+-- Không-null các đầu mối bắt buộc
+context Enrolment
+inv cm149_MandatoryEnds:
+  not self.student.oclIsUndefined() and not self.offering.oclIsUndefined()
+
+context CourseOffering
+inv cm150_MandatoryEnds:
+  not self.module.oclIsUndefined() and not self.term.oclIsUndefined() and not self.instructor.oclIsUndefined()
+
+context ProgramEnrolment
+inv cm151_MandatoryEnds:
+  not self.student.oclIsUndefined() and not self.program.oclIsUndefined()
+
+context TermRecord
+inv cm152_MandatoryEnds:
+  not self.student.oclIsUndefined() and not self.term.oclIsUndefined()
+
+-- Tương thích tham chiếu: Enrolment.term = Offering.term
+context Enrolment
+inv cm153_OfferingTermConsistency:
+  self.term() = self.offering.term
+
+-- Một sinh viên – một TermRecord cho mỗi kỳ
+context TermRecord
+inv cm154_OneRecordPerStudentPerTerm:
+  TermRecord.allInstances()
+    ->select(x | x.student = self.student and x.term = self.term)
+    ->size() = 1
+
+-- Một Student có nhiều ProgramEnrolment nhưng chỉ 1 ACTIVE (cấu trúc)
+context ProgramEnrolment
+inv cm155_SingleActivePEPerStudent:
+  ProgramEnrolment.allInstances()
+    ->select(pe | pe.student = self.student and pe.status = EnrolProStatus::ACTIVE)
+    ->size() <= 1
+-- Cấm tự tham chiếu
+context CourseModule
+inv cm156_self_NoSelfPrereq:
+  not self.prerequisites->includes(self)
+
+context CourseModule
+inv cm157_self_NoSelfExclusion:
+  not self.exclusions->includes(self)
+
+context CourseModule
+inv cm158_self_NoSelfCorequisite:
+  not self.corequisites->includes(self)
+
+-- (Tùy chọn) Đối xứng loại trừ phổ biến: nếu A loại trừ B thì B loại trừ A
+context CourseModule
+inv cm159_self_ExclusionSymmetric:
+  self.exclusions->forAll(x | x.exclusions->includes(self))
+
+-- Duy nhất theo (student, program, admissionTerm)
+context ProgramEnrolment
+inv cm160_qual_UniquePEByAdmission:
+  ProgramEnrolment.allInstances()
+    ->select(x | x.student = self.student and x.program = self.program and x.admissionTerm = self.admissionTerm)
+    ->size() = 1
+
+-- Duy nhất theo (module, term, schedule) cho Offering (lịch/tiết độc nhất trong kỳ cho cùng học phần)
+context CourseOffering
+inv cm161_qual_UniqueModuleTermSchedule:
+  CourseOffering.allInstances()
+    ->select(o | o.module = self.module and o.term = self.term and o.schedule = self.schedule)
+    ->size() = 1
+
+-- Duy nhất theo (student, term): TermRecord phía trên đã có, nhắc lại như “qualified key”
+context TermRecord
+inv cm162_qual_UniqueByStudentTerm:
+  TermRecord.allInstances()->isUnique(x | Tuple{st=x.student, tm=x.term})
+-- Đồ thị tiên quyết không chu trình (hierarchy DAG)
+context CourseModule
+inv cm163_hier_NoCyclicPrereq:
+  not self.prerequisites->closure(x | x.prerequisites)->includes(self)
+
+-- Tiên quyết không “vượt cấp” (prereq không ở cấp cao hơn)
+-- (BASIC ≤ ADVANCED): tiên quyết có level ≤ level của học phần
+context CourseModule
+inv cm164_hier_PrereqLevelMonotone:
+  self.prerequisites->forAll(pr | 
+    (pr.level = CourseLevel::BASIC) or (pr.level = self.level)
+  )
+
+-- (Tùy chọn) Corequisites cùng/không cao hơn cấp độ (đảm bảo ngang hàng)
+context CourseModule
+inv cm165_hier_CoreqLevelAligned:
+  self.corequisites->forAll(c | c.level = self.level)
+-- Bộ quan hệ trên CourseModule disjoint: một môn không thể vừa là prereq vừa là exclusion/coreq của chính nó
+context CourseModule
+inv cm166_coll_PairwiseDisjointSets:
+  self.prerequisites->intersection(self.exclusions)->isEmpty() and
+  self.prerequisites->intersection(self.corequisites)->isEmpty() and
+  self.corequisites->intersection(self.exclusions)->isEmpty()
+
+-- Mỗi AcademicTerm phải có Offering nhất định (không rỗng) – phổ biến trong vận hành
+context AcademicTerm
+inv cm167_coll_HasAtLeastOneOffering:
+  self.offering->size() >= 1
+
+-- Instructor không trùng lịch trong cùng kỳ hiện tại (consistency trên tập Offering)
+context Instructor
+inv cm168_coll_NoScheduleCollisionCurrentTerm:
+  self.offering
+    ->select(o | o.term.isCurTerm = true and not o.schedule.oclIsUndefined() and o.schedule <> '')
+    ->isUnique(o | o.schedule)
+
+-- Student không trùng Offering trong kỳ hiện tại
+context Student
+inv cm169_coll_NoDuplicateOfferingInCurrentTerm:
+  self.enrolment
+    ->select(e | e.offering.term.isCurTerm = true)
+    ->isUnique(e | e.offering)
+
+-- Program có tổng tín chỉ core đáp ứng minCoreCredits (consistency giữa tập core và ngưỡng)
+context Program
+inv cm170_coll_CoreCreditsSupplyAtLeastMin:
+  self.module
+    ->select(m | m.type = CourseType::CORE)
+    ->collect(m | m.credits)->sum() >= self.minCoreCredits
+--------------------------------
+context AcademicTerm
+inv cm171_OneCurrentTerm:
+  AcademicTerm.allInstances()->select(t | t.isCurTerm)->size() = 1
+ context AcademicTerm  
+inv cm172_MustHaveCurrentTerm:
+    AcademicTerm.allInstances()->exists(t | t.isCurTerm = true)

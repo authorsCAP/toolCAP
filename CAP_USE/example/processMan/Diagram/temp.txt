@@ -1,0 +1,882 @@
+model ProcessManV1
+
+enum ProcessType { FOR_SUBJECT, NOT_FOR_SUBJECT }
+enum WorkStatus { DRAFT, ACTIVE, INACTIVE, DEPRECATED, RESTRUCTURING }
+enum TaskStatus { PENDING, IN_PROGRESS, COMPLETED, CANCELLED }
+enum ActionStatus { PENDING, EXECUTED, FAILED }
+enum Semester { SPRING, SUMMER, FALL }
+enum StatusT4S { ASSIGNED, IN_PROGRESS, COMPLETED }
+enum StatusA4S { PENDING, EXECUTED, FAILED }
+
+class Process
+attributes
+    id: Integer
+    code: String 
+    name: String
+    desc: String
+    type: ProcessType
+    status: WorkStatus
+    estimatedDuration: Real  
+    actualDuration: Real
+    completionRate: Real    
+    createdBy: String
+    createdDate: String   
+end
+class Task
+attributes
+    id: Integer
+    code: String  
+    name: String
+    desc: String
+    startW: Integer
+    endW: Integer
+    status: TaskStatus
+    estimatedDuration: Real
+    actualDuration: Real
+    startDate: String
+    dueDate: String
+    completedDate: String
+    assignedToId: Integer
+    assignedById: Integer
+    requiresApproval: Boolean
+    canDelegate: Boolean
+    retryCount: Integer
+    maxRetries: Integer
+end
+class Action
+attributes
+    id: Integer
+    code: String
+    name: String
+    desc: String
+    status: ActionStatus
+    executedBy: String
+    executedDate: String
+    parameters: String
+    errorMessage: String
+    actionType: String
+end
+--association TaskOrgUnit
+--between
+ --   Task[*]   role task
+ --   OrgUnit[0..1] role orgUnit
+--end
+
+associationclass Task4Subject  
+between
+    Task[*] role task
+    SubjectBySemester[*] role subBySe   
+attributes
+    id: Integer
+    assignedDate: String
+    status: StatusT4S
+    progress: Real
+    notes: String
+    workloadHours: Real
+end
+
+
+associationclass Action4Subject  
+between
+    Action[*] role action
+    SubjectBySemester[*] role subBySe 
+attributes
+    id: Integer
+    executedDate: String
+    result: String
+    status: StatusA4S
+    parameters: String
+end
+
+
+association ProcessTasks
+between
+    Process[1]   role process
+    Task[*] role task
+end
+--association ProcessAction
+--between
+ --   Process[1]   role process
+ --   Action[*] role action
+--end
+association TaskActions
+between
+    Task[1]   role task
+    Action[*] role action
+end
+
+class Subject
+attributes
+    id: Integer
+    code: String   
+    name: String  
+    credits: Integer
+    department: String
+    status: WorkStatus
+    capacity: Integer
+    currentEnrollment: Integer
+    totalTeachingHours: Real 
+end
+
+class SubjectBySemester
+attributes
+    id: Integer
+    semester: Semester
+    year: Integer
+    approvedExam: Boolean
+end
+class Teacher
+attributes
+    id: Integer
+    name: String
+    department: String
+    email: String
+    status: WorkStatus
+    maxWorkload: Real
+end
+associationclass TeachingBySemester 
+between
+    Teacher[*]   role teacher
+    SubjectBySemester[*] role subBySe
+attributes
+  id: Integer
+  assignedHours: Real
+  startDate: String
+  endDate: String
+  role: String  
+end
+association implementedBy
+between
+    Subject[1]   role subject
+    SubjectBySemester[*] role subBySe
+end
+
+
+class OrgUnit
+attributes
+    id: Integer
+    name: String
+    status: WorkStatus
+    manager: String
+    capacity: Integer
+    budget: Real
+end
+class ProcessApplication
+attributes
+    id: Integer
+    semester: Semester
+    year: Integer
+    status: WorkStatus
+    submittedDate: String
+    approvedDate: String
+    desc: String
+end
+association OrgUnitParent
+between
+    OrgUnit[0..1]   role parent       
+    OrgUnit[*]      role subUnits     
+end
+association OrgUnitProcess
+between
+    OrgUnit[1]   role orgUnit
+    Process[*] role process
+end
+association OrgUnitProcessApplication
+between
+    OrgUnit[1]   role orgUnit
+    ProcessApplication[*] role proApp
+end
+association ProcessApplicationProcess
+between
+    ProcessApplication[*]   role proApp
+    Process[1] role process
+end
+
+
+
+class DomainUser
+attributes
+    id: Integer
+    login: String  
+    name: String
+    email: String
+    status: WorkStatus
+    activated: Boolean
+    accountLocked: Boolean
+    failedLoginAttempts: Integer
+    totalTasksAssigned: Integer
+    totalTasksCompleted: Integer
+    workloadHours: Real
+end
+
+association DomainUserOrgUnit
+between
+    DomainUser[*]   role domainUser
+    OrgUnit[*]      role orgUnit   
+end
+
+-- ===============================================
+-- CONSTRAINTS
+-- ===============================================
+
+constraints
+---=================================SUM
+-- pm01_ProcessDurationSum
+context Process
+inv pm01_ProcessDurationSum:
+  self.task->collect(t | t.estimatedDuration)->sum() >= self.estimatedDuration
+
+-- pm02_OrgUnitWorkloadWithinCapacity
+context OrgUnit
+inv pm02_OrgUnitWorkloadWithinCapacity:
+  let total = DomainUser.allInstances()->select(u |  u.orgUnit->includes(self))->collect(u | u.workloadHours)->sum() in
+  let capHours = self.capacity * 40.0 in  -- 40h / user-week (tuỳ cấu hình)
+  total <= capHours
+
+-- pm03_SubjectTeachingHoursFromCredits_Min
+context Subject
+inv pm03_SubjectTeachingHoursFromCredits_Min:
+  let teachingHours : Real = 
+    self.subBySe
+      ->collect(sbs | TeachingBySemester.allInstances()
+        ->select(tb | tb.subBySe = sbs)->size())
+      ->sum() * 15.0 in
+  teachingHours >= self.credits * 15.0
+
+-- pm04_ProcessCompletionRateUpperBound
+context Process
+inv pm04_ProcessCompletionRateUpperBound:
+  self.task->size() > 0 implies self.completionRate <= 1.0
+
+
+-- pm06_UserFailedLoginLimit
+context DomainUser
+inv pm06_UserFailedLoginLimit:
+  self.failedLoginAttempts <= 5
+
+context OrgUnit
+inv pm07_OrgUnitSubBudgetLeqBudget:
+  let subBudgetSum : Real = 
+    self.subUnits->collect(x | x.budget)->sum() in
+  subBudgetSum <= self.budget
+
+
+-- pm08_SubjectEnrollmentLeqCapacity
+context Subject
+inv pm08_SubjectEnrollmentLeqCapacity:
+  self.currentEnrollment <= self.capacity
+
+
+-- pm10_ActionExecutedHasResult
+context Action
+inv pm10_ActionExecutedHasResult:
+ (self.status = ActionStatus::EXECUTED implies self.errorMessage.oclIsUndefined() or self.errorMessage = '') and
+   (self.status = ActionStatus::FAILED implies not self.errorMessage.oclIsUndefined())
+
+-- pm11_ProcessActualDurationSum
+context Process
+inv pm11_ProcessActualDurationSum:
+  self.actualDuration >= self.task->collect(t | t.actualDuration)->sum()
+
+-- pm12_TeacherLoadSumNonNegative
+context Teacher
+inv pm12_TeacherLoadSumNonNegative:
+  TeachingBySemester.allInstances()->select(tb | tb.teacher = self)->size() >= 0
+
+--========================================Prerequisites
+-- pm13_ProcessActiveRequiresOwnerAndTasks
+context Process
+inv pm13_ProcessActiveRequiresOwnerAndTasks:
+  self.status = WorkStatus::ACTIVE implies (self.orgUnit->notEmpty() and self.task->notEmpty())
+
+-- pm14_TaskInProgressRequiresAssignee
+context Task
+inv pm14_TaskInProgressRequiresAssignee:
+  self.status = TaskStatus::IN_PROGRESS implies self.assignedToId > 0
+
+-- pm15_ActionExecutedRequiresExecutor
+context Action
+inv pm15_ActionExecutedRequiresExecutor:
+  self.status = ActionStatus::EXECUTED implies (not self.executedBy.oclIsUndefined() and self.executedBy <> '')
+
+-- pm16_OrgUnitActiveRequiresManager
+context OrgUnit
+inv pm16_OrgUnitActiveRequiresManager:
+  self.status = WorkStatus::ACTIVE implies (not self.manager.oclIsUndefined() and self.manager <> '')
+
+-- pm17_TaskCompletedRequiresApproveIfFlag
+context Task
+inv pm17_TaskCompletedRequiresApproveIfFlag:
+  (self.requiresApproval = true and self.status = TaskStatus::COMPLETED)
+  implies self.action->exists(a | a.actionType = 'APPROVE' and a.status = ActionStatus::EXECUTED)
+
+-- pm18_SubjectActiveRequiresCapacity
+context Subject
+inv pm18_SubjectActiveRequiresCapacity:
+  self.status = WorkStatus::ACTIVE implies self.capacity > 0
+
+-- pm19_Task4SubjectAssignedRequiresValidEnds
+context Task4Subject
+inv pm19_Task4SubjectAssignedRequiresValidEnds:
+  self.status = StatusT4S::ASSIGNED implies 
+  (self.task.status = TaskStatus::PENDING and 
+   self.subBySe.approvedExam = true)   
+
+-- pm20_Action4SubjectExecRequiresActionExecuted
+context Action4Subject
+inv pm20_Action4SubjectExecRequiresActionExecuted:
+  self.status = StatusA4S::EXECUTED implies self.action.status = ActionStatus::EXECUTED
+
+-- pm21_ProcessDraftBeforeActive
+context Process
+inv pm21_ProcessDraftBeforeActive:
+  self.status = WorkStatus::ACTIVE implies self.createdDate <> ''
+
+-- pm22_TaskEndWeekAfterStartWeek
+context Task
+inv pm22_TaskEndWeekAfterStartWeek:
+  self.endW >= self.startW
+
+-- pm23_ActionExecAfterTaskStart
+context Action
+inv pm23_ActionExecAfterTaskStart:
+  (not self.executedDate.oclIsUndefined() and not self.task.oclIsUndefined() and not self.task.startDate.oclIsUndefined())
+    implies self.task.startDate <= self.executedDate
+
+-- pm24_ProcessForSubjectRequiresType
+context Process
+inv pm24_ProcessForSubjectRequiresType:
+  self.task->exists(t | t.oclIsKindOf(Task4Subject)) implies self.type = ProcessType::FOR_SUBJECT
+
+-- pm25_SubjectBySemRequiresSubject
+context SubjectBySemester
+inv pm25_SubjectBySemRequiresSubject:
+  Subject.allInstances()->exists(s |  s.subBySe->includes(self))
+
+-- pm26_OrgUnitRequestsPARequiresProcess
+context ProcessApplication
+inv pm26_OrgUnitRequestsPARequiresProcess:
+  not self.process.oclIsUndefined()
+--==================================SCHEDULE
+-- pm27_TaskStartDueOrder
+context Task
+inv pm27_TaskStartDueOrder:
+  (not self.startDate.oclIsUndefined() and not self.dueDate.oclIsUndefined()) implies self.startDate <= self.dueDate
+
+
+-- pm29_ProcessCreatedDateFormat
+context Process
+inv pm29_ProcessCreatedDateFormat:
+  not self.createdDate.oclIsUndefined() implies self.createdDate.size() = 10
+
+-- pm31_Task4SubjectAssignedHasDate
+context Task4Subject
+inv pm31_Task4SubjectAssignedHasDate:
+  not self.assignedDate.oclIsUndefined() implies self.assignedDate.size() = 10
+
+-- pm32_Action4SubjectExecutedHasDate
+context Action4Subject
+inv pm32_Action4SubjectExecutedHasDate:
+  self.status = StatusA4S::EXECUTED implies (not self.executedDate.oclIsUndefined() and self.executedDate <> '')
+
+-- pm33_TaskDeadlineNotPastStartWeek
+context Task
+inv pm33_TaskDeadlineNotPastStartWeek:
+  self.endW >= self.startW
+
+-- pm34_ProcessApplicationHasSemesterYear
+context ProcessApplication
+inv pm34_ProcessApplicationHasSemesterYear:
+  (not self.semester.oclIsUndefined() and self.year > 2000)
+
+-- pm35_TeachingBySemRequiresLinks
+context TeachingBySemester
+inv pm35_TeachingBySemRequiresLinks:
+  (not self.teacher.oclIsUndefined() and not self.subBySe.oclIsUndefined())
+
+-- pm36_SubjectBySemYearConsistent
+context SubjectBySemester
+inv pm36_SubjectBySemYearConsistent:
+  self.year >= 2000
+--=================Eligibility
+-- pm37_TaskAssigneeExistsAndActive
+context Task
+inv pm37_TaskAssigneeExistsAndActive:
+  self.assignedToId > 0 implies DomainUser.allInstances()->exists(u | u.id = self.assignedToId and u.status = WorkStatus::ACTIVE)
+
+-- pm38_ProcessModifiableWhenDraftOrOwner
+context Process
+inv pm38_ProcessModifiableWhenDraftOrOwner:
+  self.status = WorkStatus::DRAFT or (not self.createdBy.oclIsUndefined() and self.createdBy <> '')
+
+-- pm39_ActionExecutorImpliesExecuted
+context Action
+inv pm39_ActionExecutorImpliesExecuted:
+  (not self.executedBy.oclIsUndefined() and self.executedBy <> '') implies self.status = ActionStatus::EXECUTED
+
+-- pm40_TaskDelegationEligibility
+context Task
+inv pm40_TaskDelegationEligibility:
+  self.canDelegate = true implies self.assignedById > 0
+
+-- pm41_SubjectMgmtEligibility
+context Subject
+inv pm41_SubjectMgmtEligibility:
+  self.status = WorkStatus::ACTIVE implies (not self.department.oclIsUndefined() and self.department <> '')
+
+-- pm42_OrgUnitMgmtEligibility
+context OrgUnit
+inv pm42_OrgUnitMgmtEligibility:
+  self.status = WorkStatus::ACTIVE implies (self.manager <> '' and self.capacity > 0)
+
+-- pm43_TeacherEligibleIfActiveUnit
+context Teacher
+inv pm43_TeacherEligibleIfActiveUnit:
+  TeachingBySemester.allInstances()->exists(tb | tb.teacher = self)
+-- pm44_ProcessForSubjectRequiresSBS
+context Process
+inv pm44_ProcessForSubjectRequiresSBS:
+  self.type = ProcessType::FOR_SUBJECT implies
+    Task4Subject.allInstances()->exists(ts | ts.task.process = self)
+
+-- pm45_TaskApprovalEligibility
+context Task
+inv pm45_TaskApprovalEligibility:
+  self.requiresApproval = true implies self.action->exists(a | a.actionType = 'APPROVE')
+
+-- pm46_DomainUserActivationEligibility
+context DomainUser
+inv pm46_DomainUserActivationEligibility:
+  self.activated = true implies self.status = WorkStatus::ACTIVE
+
+-- pm47_SubjectBySemApprovedExamEligibility
+context SubjectBySemester
+inv pm47_SubjectBySemApprovedExamEligibility:
+  self.approvedExam = true implies self.year >= 2000
+
+-- pm48_ProcessApplicationOwnerEligibility
+context ProcessApplication
+inv pm48_ProcessApplicationOwnerEligibility:
+  OrgUnit.allInstances()->exists(o | o.proApp->includes(self) and o.status = WorkStatus::ACTIVE)
+--=============================Retake
+-- pm49_TaskRetryPolicy
+context Task
+inv pm49_TaskRetryPolicy:
+  self.retryCount <= self.maxRetries
+
+-- pm50_ActionFailedHasErrorMessage
+context Action
+inv pm50_ActionFailedHasErrorMessage:
+  self.status = ActionStatus::FAILED implies (not self.errorMessage.oclIsUndefined() and self.errorMessage <> '')
+
+-- pm51_Task4SubjectProgressRange
+context Task4Subject
+inv pm51_Task4SubjectProgressRange:
+  self.progress >= 0.0 and self.progress <= 1.0
+
+-- pm52_UserLoginRetryLocksAccount
+context DomainUser
+inv pm52_UserLoginRetryLocksAccount:
+  self.failedLoginAttempts >= 5 implies self.accountLocked = true
+
+-- pm53_TaskRetryIncrementMonotonic
+context Task
+inv pm53_TaskRetryIncrementMonotonic:
+  self.maxRetries >= 0 and self.retryCount >= 0
+
+-- pm54_ActionRetryAllowedWhenFailed
+context Action
+inv pm54_ActionRetryAllowedWhenFailed:
+  self.status = ActionStatus::FAILED implies true -- (hook cho policy chi tiết)
+
+-- pm55_ProcessReapplyWhenDeprecatedForbidden
+context Process
+inv pm55_ProcessReapplyWhenDeprecatedForbidden:
+  self.status = WorkStatus::DEPRECATED implies
+    not ProcessApplication.allInstances()->exists(pa | pa.process = self)
+
+-- pm56_OrgUnitRestructureRestrictAssignments
+context OrgUnit
+inv pm56_OrgUnitRestructureRestrictAssignments:
+  self.status = WorkStatus::RESTRUCTURING implies
+    DomainUser.allInstances()
+      ->select(u | u.orgUnit->includes(self))
+      ->isEmpty()
+--=========================SIZE
+-- pm57_MaxTasksPerProcess
+context Process
+inv pm57_MaxTasksPerProcess:
+  self.task->size() <= 50
+
+-- pm58_UserNameLength
+context DomainUser
+inv pm58_UserNameLength:
+  self.name.size() >= 2 and self.name.size() <= 100
+
+-- pm59_ProcessDescMaxLen
+context Process
+inv pm59_ProcessDescMaxLen:
+  self.desc.oclIsUndefined() or self.desc.size() <= 1000
+
+-- pm60_TaskNameLength
+context Task
+inv pm60_TaskNameLength:
+  self.name.size() >= 3 and self.name.size() <= 200
+
+-- pm61_OrgUnitCapacityByUsers
+context OrgUnit
+inv pm61_OrgUnitCapacityByUsers:
+  DomainUser.allInstances()
+    ->select(u | u.orgUnit->includes(self))
+    ->size() <= self.capacity
+
+-- pm62_SubjectCodeLength
+context Subject
+inv pm62_SubjectCodeLength:
+  self.code.size() >= 2 and self.code.size() <= 10
+
+-- pm63_ActionParametersSize
+context Action
+inv pm63_ActionParametersSize:
+  self.parameters.oclIsUndefined() or self.parameters.size() <= 2000
+
+-- pm64_Task4SubjectNotesMax
+context Task4Subject
+inv pm64_Task4SubjectNotesMax:
+  self.notes.oclIsUndefined() or self.notes.size() <= 500
+
+-- pm65_MaxActionsPerTask
+context Task
+inv pm65_MaxActionsPerTask:
+  self.action->size() <= 100
+
+-- pm66_MaxTeachingLinksPerTeacher
+context Teacher
+inv pm66_MaxTeachingLinksPerTeacher:
+  TeachingBySemester.allInstances()->select(tb | tb.teacher = self)->size() <= 40
+
+-- pm67_MaxProcessAppsPerUnitPerYear
+context OrgUnit
+inv pm67_MaxProcessAppsPerUnitPerYear:
+  self.proApp->select(pa | pa.year = self.proApp->any(true).year)->size() <= 100
+
+-- pm68_MinOneTaskIfActive
+context Process
+inv pm68_MinOneTaskIfActive:
+  self.status = WorkStatus::ACTIVE implies self.task->size() >= 1
+--========================Time
+-- pm69_TaskCompletedWithinDue
+context Task
+inv pm69_TaskCompletedWithinDue:
+  (self.status = TaskStatus::COMPLETED and not self.completedDate.oclIsUndefined() and not self.dueDate.oclIsUndefined())
+  implies self.completedDate <= self.dueDate
+
+-- pm70_ActionExecutedAfterAssignedWindow
+context Action
+inv pm70_ActionExecutedAfterAssignedWindow:
+  (not self.executedDate.oclIsUndefined() and not self.task.oclIsUndefined() and not self.task.startDate.oclIsUndefined())
+  implies self.task.startDate <= self.executedDate
+
+-- pm71_ProcessCreatedDatePresentIfActive
+context Process
+inv pm71_ProcessCreatedDatePresentIfActive:
+  self.status = WorkStatus::ACTIVE implies (not self.createdDate.oclIsUndefined() and self.createdDate <> '')
+
+-- pm72_TaskDueDateFormat
+context Task
+inv pm72_TaskDueDateFormat:
+  not self.dueDate.oclIsUndefined() implies self.dueDate.size() = 10
+
+-- pm73_TaskStartDateFormat
+context Task
+inv pm73_TaskStartDateFormat:
+  not self.startDate.oclIsUndefined() implies self.startDate.size() = 10
+
+-- pm74_ActionExecDateFormat
+context Action
+inv pm74_ActionExecDateFormat:
+  self.status = ActionStatus::EXECUTED implies self.executedDate.size() = 10
+
+-- pm75_Task4SubjectAssignedDateFormat
+context Task4Subject
+inv pm75_Task4SubjectAssignedDateFormat:
+  not self.assignedDate.oclIsUndefined() implies self.assignedDate.size() = 10
+
+-- pm76_Action4SubjectExecDateFormat
+context Action4Subject
+inv pm76_Action4SubjectExecDateFormat:
+  self.status = StatusA4S::EXECUTED implies self.executedDate.size() = 10
+
+-- pm77_TaskDurationReasonable
+context Task
+inv pm77_TaskDurationReasonable:
+  self.estimatedDuration > 0 and (self.actualDuration > 0 implies self.actualDuration <= self.estimatedDuration * 3.0)
+
+-- pm78_ProcessDurationReasonable
+context Process
+inv pm78_ProcessDurationReasonable:
+  self.actualDuration > 0 implies self.actualDuration <= self.estimatedDuration * 4.0
+--=====================SUMPRODUC
+-- pm79_TaskStatusDerivedFromActions
+context Task
+inv pm79_TaskStatusDerivedFromActions:
+  if self.action->isEmpty() then 
+    self.status = TaskStatus::PENDING
+  else 
+    if self.action->forAll(a | a.status = ActionStatus::EXECUTED) then 
+      self.status = TaskStatus::COMPLETED
+    else 
+      if self.action->exists(a | a.status = ActionStatus::FAILED) then 
+        self.status = TaskStatus::CANCELLED
+      else 
+        self.status = TaskStatus::IN_PROGRESS 
+      endif 
+    endif 
+  endif
+
+
+-- pm80_ProcessCompletionRateDerived
+context Process
+inv pm80_ProcessCompletionRateDerived:
+  let total : Integer = self.task->size() in
+  let done  : Integer = self.task->select(t | t.status = TaskStatus::COMPLETED)->size() in
+  (total = 0 implies self.completionRate = 0.0) and
+  (total > 0 implies self.completionRate = (done * 1.0) / total)
+
+
+-- pm81_SubjectTotalTeachingHoursDerived
+context Subject
+inv pm81_SubjectTotalTeachingHoursDerived:
+  self.totalTeachingHours = (self.credits * 15).oclAsType(Integer)
+
+-- pm82_ProcessTypeDerivedFromLinks
+context Process
+inv pm82_ProcessTypeDerivedFromLinks:
+  (Task4Subject.allInstances()->exists(ts | ts.task.process = self)) implies self.type = ProcessType::FOR_SUBJECT
+
+-- pm83_OrgUnitUtilizationDerivedBounds
+context OrgUnit
+inv pm83_OrgUnitUtilizationDerivedBounds:
+  let users : Integer = 
+    DomainUser.allInstances()
+      ->select(u | u.orgUnit->includes(self))
+      ->size() in
+  (self.capacity > 0 implies (users * 1.0) / self.capacity <= 1.2)
+
+
+
+-- pm85_ProcessActualSumDerivedLowerBound
+context Process
+inv pm85_ProcessActualSumDerivedLowerBound:
+  self.actualDuration >= self.task->collect(t | t.actualDuration)->sum()
+
+-- pm86_Action4SubjectStatusMatch
+context Action4Subject
+inv pm86_Action4SubjectStatusMatch:
+  self.status = StatusA4S::EXECUTED implies self.action.status = ActionStatus::EXECUTED
+
+-- pm87_TaskWeeksSpanDerived
+context Task
+inv pm87_TaskWeeksSpanDerived:
+  self.endW - self.startW >= 0
+
+-- pm88_SubjectBySemKeyDerived
+context SubjectBySemester
+inv pm88_SubjectBySemKeyDerived:
+  self.year >= 2000 and not self.semester.oclIsUndefined()
+
+-- pm89_TeachingBySemLinksDerived
+context TeachingBySemester
+inv pm89_TeachingBySemLinksDerived:
+  not self.teacher.oclIsUndefined() and not self.subBySe.oclIsUndefined()
+
+-- pm90_ProcessCreatedByDateCoherence
+context Process
+inv pm90_ProcessCreatedByDateCoherence:
+  (not self.createdBy.oclIsUndefined() and self.createdBy <> '') implies (not self.createdDate.oclIsUndefined() and self.createdDate <> '')
+--===============================status
+-- pm91_UserAccountStatusRules
+context DomainUser
+inv pm91_UserAccountStatusRules:
+  (self.accountLocked = true implies self.failedLoginAttempts >= 5)
+
+-- pm92_ProcessLifecycleStatusCoherence
+context Process
+inv pm92_ProcessLifecycleStatusCoherence:
+  (self.status = WorkStatus::ACTIVE implies self.task->notEmpty()) and
+  (self.status = WorkStatus::DEPRECATED implies not self.createdDate.oclIsUndefined())
+
+-- pm93_TaskStatusProgression
+context Task
+inv pm93_TaskStatusProgression:
+  (self.status = TaskStatus::COMPLETED implies not self.completedDate.oclIsUndefined()) and
+  (self.status = TaskStatus::IN_PROGRESS implies self.assignedToId > 0)
+
+-- pm94_OrgUnitStatusConsistency
+context OrgUnit
+inv pm94_OrgUnitStatusConsistency:
+  self.status = WorkStatus::INACTIVE implies
+    Process.allInstances()
+      ->select(p | p.orgUnit->includes(self) and p.status = WorkStatus::ACTIVE)
+      ->isEmpty()
+
+
+-- pm95_SubjectStatusManagement
+context Subject
+inv pm95_SubjectStatusManagement:
+  (self.status = WorkStatus::DEPRECATED implies self.currentEnrollment = 0) and
+  (self.status = WorkStatus::ACTIVE implies self.capacity > 0)
+
+-- pm96_ActionStatusWorkflow
+context Action
+inv pm96_ActionStatusWorkflow:
+  (self.status = ActionStatus::EXECUTED implies (not self.executedDate.oclIsUndefined())) and
+  (self.status = ActionStatus::FAILED implies (not self.errorMessage.oclIsUndefined() and self.errorMessage <> ''))
+
+-- pm97_ProcessDraftAllowsEdit
+context Process
+inv pm97_ProcessDraftAllowsEdit:
+  self.status = WorkStatus::DRAFT implies true
+
+-- pm98_TaskCancelledNoFurtherExec
+context Task
+inv pm98_TaskCancelledNoFurtherExec:
+self.status = TaskStatus::CANCELLED implies self.action->exists(a | a.status = ActionStatus::FAILED)
+
+-- pm99_ActionPendingNoExecDate
+context Action
+inv pm99_ActionPendingNoExecDate:
+  self.status = ActionStatus::PENDING implies self.executedDate.oclIsUndefined() or self.executedDate = ''
+
+-- pm100_OrgUnitRestructuringHasManager
+context OrgUnit
+inv pm100_OrgUnitRestructuringHasManager:
+  self.status = WorkStatus::RESTRUCTURING implies (not self.manager.oclIsUndefined() and self.manager <> '')
+
+-- pm101_SubjectActiveNeedsDepartment
+context Subject
+inv pm101_SubjectActiveNeedsDepartment:
+  self.status = WorkStatus::ACTIVE implies (not self.department.oclIsUndefined() and self.department <> '')
+
+-- pm102_TaskPendingNoCompletedDate
+context Task
+inv pm102_TaskPendingNoCompletedDate:
+  self.status = TaskStatus::PENDING implies self.completedDate.oclIsUndefined() or self.completedDate = ''
+--====================STRUCTURAL
+-- pm103_UniqueUserLogin
+context DomainUser
+inv pm103_UniqueUserLogin:
+  DomainUser.allInstances()->isUnique(u | u.login)
+
+-- pm104_UniqueProcessCode
+context Process
+inv pm104_UniqueProcessCode:
+  Process.allInstances()->isUnique(p | p.code)
+
+-- pm105_UniqueTaskCode
+context Task
+inv pm105_UniqueTaskCode:
+  Task.allInstances()->isUnique(t | t.code)
+
+-- pm106_SubjectCodeUnique
+context Subject
+inv pm106_SubjectCodeUnique:
+  Subject.allInstances()->isUnique(s | s.code)
+
+-- pm107_MandatoryEnds_TaskProcess
+context Task
+inv pm107_MandatoryEnds_TaskProcess:
+  not self.process.oclIsUndefined()
+
+-- pm108_MandatoryEnds_ActionTask
+context Action
+inv pm108_MandatoryEnds_ActionTask:
+  not self.task.oclIsUndefined()
+
+-- pm109_MandatoryEnds_T4S
+context Task4Subject
+inv pm109_MandatoryEnds_T4S:
+  not self.task.oclIsUndefined() and not self.subBySe.oclIsUndefined()
+
+-- pm110_MandatoryEnds_A4S
+context Action4Subject
+inv pm110_MandatoryEnds_A4S:
+  not self.action.oclIsUndefined() and not self.subBySe.oclIsUndefined()
+
+-- pm111_UserBelongsToOrgUnit
+context DomainUser
+inv pm111_UserBelongsToOrgUnit:
+  self.orgUnit->notEmpty()
+
+-- pm112_OrgUnitHierarchyNoSelfLoop
+context OrgUnit
+inv pm112_OrgUnitHierarchyNoSelfLoop:
+  self.subUnits->forAll(x | x <> self)
+
+-- pm113_OrgUnitHierarchyAcyclic (weak form)
+context OrgUnit
+inv pm113_OrgUnitHierarchyAcyclic:
+  not self.subUnits->includes(self)
+
+-- pm114_ProcessOwnerUnitMandatoryIfActive
+context Process
+inv pm114_ProcessOwnerUnitMandatoryIfActive:
+  self.status = WorkStatus::ACTIVE implies self.orgUnit->notEmpty()
+
+-- pm115_TeachingBySemUniquePair
+context TeachingBySemester
+inv pm115_TeachingBySemUniquePair:
+  TeachingBySemester.allInstances()->isUnique(tb |  tb.id )
+
+-- pm116_SubjectBySemUniqueKey
+context SubjectBySemester
+inv pm116_SubjectBySemUniqueKey:
+  SubjectBySemester.allInstances()->isUnique(x | x.id)
+
+-- pm117_ProcessAppHasProcess
+context ProcessApplication
+inv pm117_ProcessAppHasProcess:
+  not self.process.oclIsUndefined()
+
+-- pm118_ProcessHasTasksIfNotDraft
+context Process
+inv pm118_ProcessHasTasksIfNotDraft:
+  self.status <> WorkStatus::DRAFT implies self.task->notEmpty()
+
+-- pm119_ActionBelongsToTaskSameProcess
+context Action
+inv pm119_ActionBelongsToTaskSameProcess:
+  not self.task.oclIsUndefined() and not self.task.process.oclIsUndefined()
+
+-- pm120_Task4SubjectActionConsistency
+context Task4Subject
+inv pm120_Task4SubjectActionConsistency:
+  Action4Subject.allInstances()
+    ->select(a4s | a4s.subBySe = self.subBySe)
+    ->forAll(a4s | a4s.action.task = self.task)
+
+  ---======================Check
+
+context Process inv pm130_EstimatedDurationPositive:
+  self.estimatedDuration > 0.0
+context DomainUser inv pm131_WorkloadReasonable:
+  self.workloadHours >= 0.0 and self.workloadHours <= 60.0
+
+context Teacher inv pm132_TeacherWorkloadLimit:
+  TeachingBySemester.allInstances()
+    ->select(tb | tb.teacher = self)
+    ->collect(tb | tb.assignedHours)
+    ->sum() <= self.maxWorkload
+context ProcessApplication inv pm133_DateChronology:
+  (not self.submittedDate.oclIsUndefined() and not self.approvedDate.oclIsUndefined())
+  implies self.submittedDate <= self.approvedDate
+context TeachingBySemester inv pm134_TeacherQualification:
+  self.teacher.department = self.subBySe.subject.department
+context OrgUnit inv pm135_MaxActiveProcesses:
+  self.process->select(p | p.status = WorkStatus::ACTIVE)->size() <= 20
+context DomainUser inv pm136_TaskCompletionConsistency:
+  let completedTasks : Integer = 
+    Task.allInstances()
+      ->select(t | t.assignedToId = self.id and t.status = TaskStatus::COMPLETED)
+      ->size() in
+  self.totalTasksCompleted = completedTasks

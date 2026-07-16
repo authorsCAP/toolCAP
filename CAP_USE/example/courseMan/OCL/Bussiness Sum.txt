@@ -1,0 +1,23 @@
+
+Prerequisite Constraints
+pattern is a formal constraint pattern that ensures validity and consistency in systems with dependency relations. It covers various constraint types, such as: prerequisite satisfaction, prevention of reverse dependencies or cycles, limitation of dependency depth, enforcement of grade, credit, or time requirements, and definition of exclusion or corequisite rules. This preserves consistency, supports verification, and enhances overall system reliability.
+Type 1 – Prerequisite satisfied:
+This constraint ensures that an entity may only proceed to a new unit of activity if all prerequisite conditions have been successfully met. It enforces dependency fulfillment before progression, thereby guaranteeing adequate preparation and logical sequencing in complex systems.
+Type 2 – No reverse prerequisite:
+This constraint prohibits simultaneous participation in both a unit and another unit that directly depends on it. 
+Type 3 – Required previous grade:
+This constraint requires that prerequisites are completed with a minimum performance level before accessing subsequent units. It safeguards quality by ensuring that advancement is conditional not only on completion but also on a specified achievement threshold, reinforcing standards of competency.Type 4 – No self prerequisite:}
+Type 4 – No self prerequisite:
+This constraint prohibits a unit from being defined as a prerequisite of itself. It eliminates trivial, redundant, or logically meaningless self-references, ensuring that dependency relations remain semantically valid and structurally well-founded across the system.
+Type 5 – No cyclic dependency:
+This constraint prevents the formation of dependency loops in which a unit directly or indirectly depends on itself through a chain of prerequisites.
+Type 6 – Maximum prerequisite depth:
+This constraint limits the maximum length of dependency chains among units. By bounding the depth of prerequisite hierarchies, it prevents excessive complexity, reduces risks of unmanageable dependency structures, and ensures that processes remain feasible and transparent to stakeholders.
+Type 7 – Exclusion constraint:
+This constraint specifies that certain units cannot coexist simultaneously due to conflict, redundancy, or mutual exclusivity. It ensures consistency by preventing overlapping or contradictory engagements, thus maintaining separation where simultaneous execution would undermine logical or organizational coherence.
+Type 8 – Credit Load Prerequisite:
+This constraint requires that a minimum accumulated workload or capacity threshold be achieved before engaging in certain advanced or resource-intensive units. It enforces readiness by linking progression not only to prior completion but also to broader performance indicators such as accumulated effort.
+Type 9 – Time window constraint:
+This constraint requires that prerequisites must be completed within a predefined temporal interval for subsequent engagement to be valid. It enforces recency and relevance, ensuring that dependency fulfillment remains timely, avoiding obsolete or outdated qualifications compromising system effectiveness.
+Type 10 – Corequisite constraint:
+This constraint mandates that certain units must be undertaken concurrently. It enforces synchronization between interdependent activities that are designed to complement one another, ensuring consistency, cohesion, and logical alignment when simultaneous participation is required for validity.

@@ -1,0 +1,370 @@
+model CourseManCore
+
+-- ======================
+-- ENUMERATIONS
+-- ======================
+enum StudentStatus {ENROLLED, GRADUATED, PROBATION, SUSPENDED}
+enum CourseLevel {BASIC, ADVANCED}
+enum CourseType {CORE, ELECTIVE}
+enum EnrolStatus {PLANNED, ACTIVE, COMPLETED, WITHDRAWN}
+enum EnrolProStatus {ACTIVE, ON_LEAVE, COMPLETED, WITHDRAWN}
+enum AcademicStatus {GOOD, PROBATION}
+enum Grade {A, B, C, D, F, I, W}
+-- ======================
+-- CORE CLASSES
+-- ======================
+class Student
+attributes
+    studentId     : String
+    name          : String
+    email         : String
+    studentStatus        : StudentStatus
+    totalCreditsCompleted : Integer
+    cumulativeGPA         : Real
+    overallStatus         : AcademicStatus
+    balance               : Real
+    aidCap                : Real
+    -- Derived
+	
+end
+
+class CourseModule
+attributes
+    moduleCode    : String
+    title         : String
+    credits       : Integer
+    tuitionFee    : Real
+    level         : CourseLevel
+    type          : CourseType
+    minPassScore: Real
+    
+end
+
+class CourseOffering
+attributes
+  offeringId    : Integer
+  schedule      : String
+  room          : String
+  minStudents   : Integer
+  maxStudents   : Integer
+end
+
+class Program
+attributes
+    programCode   : String
+    programName   : String
+    totalCredits  : Integer
+    minGPA        : Real
+    tuitionCap    : Real
+    maxWithdrawals: Integer
+    minCoreCredits: Integer
+    maxElectiveCredits : Integer
+end
+
+class AcademicTerm
+attributes
+  termId        : String
+ -- semester      : String
+  year          : Integer
+  startDate     : String
+  endDate       : String
+
+end
+
+class StudentTermRecord
+attributes
+  termCredits     : Integer
+  tuitionTotal    : Real
+  gpa             : Real
+  withdrawals     : Integer
+    scholarshipTotal : Real   -- Học bổng cho từng kỳ (chương trình)
+  academicStatus  : AcademicStatus
+  --test Type5
+  isExemptMinCredits: Boolean
+end
+
+
+class Instructor
+attributes
+    instructorId  : String
+    name          : String
+    email         : String
+    availability  : String
+    workloadLimit : Integer
+    
+end
+
+-- ======================
+-- ASSOCIATION CLASS
+-- ======================
+
+associationclass Enrolment
+between
+    Student[1] role student
+    CourseOffering[1] role offering
+attributes
+    enrolId       : Integer
+    enrolStatus   : EnrolStatus
+    grade         : String
+    attempt       : String
+    withdrawDate  : Date
+
+end
+
+
+associationclass ProgramEnrolment
+between
+    Student[1] role student
+    Program[1] role program
+attributes
+    progEnrolId    : Integer
+    admissionTerm  : String      -- ví dụ "Fall-2025"
+    enrolProStatus   : EnrolProStatus
+
+end
+
+-- ===============================================
+-- DATA TYPES
+-- ===============================================
+
+dataType Date
+  operations
+    Date(day: Integer, month : Integer, year : Integer)
+    pre: day >= 1 and day <= 31
+    pre: month >= 1 and month <= 12
+end
+
+dataType Time
+  operations
+    Time(hour: Integer, minute: Integer, second: Integer)
+    pre: hour >= 0 and hour < 24
+    pre: minute >= 0 and minute < 60
+    pre: second >= 0 and second < 60
+end
+
+-- ======================
+-- ASSOCIATIONS
+-- ======================
+
+association Offers
+between
+  CourseModule[1] role module
+  CourseOffering[*] role offerings
+end
+
+association Prerequisites
+between
+  CourseModule[*] role modules
+  CourseModule[*] role prerequisites
+end
+
+association CourseProgram
+between
+  CourseModule[*] role modules
+  Program[*] role program
+end
+
+
+association StudentTerm
+between
+  Student[1] role student
+  StudentTermRecord[*] role termRecords
+end
+
+association TermOffering
+between
+  AcademicTerm[1] role term
+  CourseOffering[*] role offerings
+end
+
+association TermRecordTerm
+between
+  StudentTermRecord[*] role termRecords
+  AcademicTerm[1] role term
+end
+association Teaching
+between
+    CourseOffering[*] role offerings
+    Instructor[1] role instructor
+end
+--association ProgramEnrolmentTerm
+--between
+ --   ProgramEnrolment[*] role progEnrolments
+--    AcademicTerm[1]     role admissionTerm
+--end
+
+-- ======================
+-- CONSTRAINTS
+-- ======================
+constraints
+
+-- Học phí hiển thị = tổng học phí kỳ đó
+------------------
+context Student
+inv SumConType1_1_TotalTuitionEqualsSum:
+  self.termRecords->forAll(str |
+    str.tuitionTotal =
+      self.enrolmentsIn(str.term)
+        ->collect(e | e.offering.module.tuitionFee)
+        ->sum()
+  )
+-------------------
+context Student
+inv Sum1_2_TotalTuition_Equals_Sum:
+  self.termRecords->forAll(str |
+    str.tuitionTotal = self.tuitionInTerm(str.term)
+  )
+  ----------------
+context Student
+inv SumConType1_TotalTuitionEqualsSum:
+  self.termRecords->forAll(str |
+    str.tuitionTotal =
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term)
+        ->collect(e | e.offering.module.tuitionFee)
+        ->sum()
+  )
+
+--==========================================
+-- 1) Học phí kỳ = tổng học phí các enrolments trong kỳ
+context Student
+inv inv1_TotalTuitionEqualsSum:
+  self.termRecords->forAll(str |
+    str.tuitionTotal =
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term)
+        ->collect(e | e.offering.module.tuitionFee)->sum()
+  )
+
+-- 2) Tín chỉ kỳ = tổng tín chỉ các enrolments trong kỳ
+context Student
+inv inv2_TotalCreditsEqualsSum:
+  self.termRecords->forAll(str |
+    str.termCredits =
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term)
+        ->collect(e | e.offering.module.credits)->sum()
+  )
+
+-- 3) Trần học phí theo từng Program ACTIVE trong mỗi kỳ
+context Student
+inv inv3_TuitionWithinLimit:
+  self.termRecords->forAll(str |
+    ProgramEnrolment.allInstances()
+      ->select(pe | pe.student = self and pe.enrolProStatus = EnrolProStatus::ACTIVE)
+      ->forAll(pe |
+        Enrolment.allInstances()
+          ->select(e | e.student = self and e.offering.term = str.term)
+          ->collect(e | e.offering.module.tuitionFee)->sum()
+        <= pe.program.tuitionCap
+      )
+  )
+
+-- 4) Tối đa 30 tín chỉ/kỳ
+context Student
+inv inv4_MaxCreditsPerTerm:
+  self.termRecords->forAll(str |
+    Enrolment.allInstances()
+      ->select(e | e.student = self and e.offering.term = str.term)
+      ->collect(e | e.offering.module.credits)->sum()
+    <= 30
+  )
+
+-- 5) Tối thiểu 15 tín chỉ/kỳ trừ khi được miễn (isExemptMinCredits ở StudentTermRecord)
+context Student
+inv inv5_MinCreditsUnlessExempt:
+  self.termRecords->forAll(str |
+    (not str.isExemptMinCredits) implies
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term)
+        ->collect(e | e.offering.module.credits)->sum()
+      >= 15
+  )
+
+-- 6) Năm học đầu (year nhỏ nhất trong records) phải 12..18 tín chỉ/kỳ
+context Student
+inv inv_Year1_12to18:
+  let minY : Integer = self.termRecords->collect(tr | tr.term.year)->asSet()->min()
+  in
+    self.termRecords->forAll(tr |
+      (tr.term.year = minY) implies (
+        let s : Integer = Enrolment.allInstances()
+          ->select(e | e.student = self and e.offering.term = tr.term)
+          ->collect(e | e.offering.module.credits)->sum()
+        in s >= 12 and s <= 18
+      )
+    )
+
+-- 7) Nếu tồn tại kỳ trước có GPA < 2.5 thì kỳ hiện tại ≤ 20 tín chỉ
+-- (Xấp xỉ “kỳ trước” bằng prev.term.year < cur.term.year)
+context Student
+inv inv7_GPAPreviousSemester:
+  self.termRecords->forAll(cur |
+    ( self.termRecords->exists(prev | prev.term.year < cur.term.year and prev.gpa < 2.5) )
+    implies
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = cur.term)
+        ->collect(e | e.offering.module.credits)->sum()
+      <= 20
+  )
+
+-- 8) PROBATION: mỗi kỳ ≤ 2 môn ADVANCED
+context Student
+inv inv8_ProbationAdvancedLimit:
+  self.overallStatus = AcademicStatus::PROBATION implies
+    self.termRecords->forAll(str |
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term
+                        and e.offering.module.level = CourseLevel::ADVANCED)
+        ->size()
+      <= 2
+    )
+
+-- 9) Nếu kỳ trước Withdrawals > 2 thì kỳ hiện tại ≤ 12 tín chỉ
+context Student
+inv inv9_WithdrawalPenalty:
+  self.termRecords->forAll(cur |
+    ( self.termRecords->exists(prev | prev.term.year < cur.term.year and prev.withdrawals > 2) )
+    implies
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = cur.term)
+        ->collect(e | e.offering.module.credits)->sum()
+      <= 12
+  )
+
+-- 10) Khi GRADUATED: tổng CORE đã hoàn tất ≥ minCoreCredits của mọi Program ACTIVE
+-- (Hoàn tất = e.enrolStatus = COMPLETED và grade không thuộc {'F','I','W'}; Enrolment.grade là String)
+context Student
+inv inv10_CoreCreditsRequirement:
+  self.studentStatus = StudentStatus::GRADUATED implies
+    ProgramEnrolment.allInstances()
+      ->select(pe | pe.student = self and pe.enrolProStatus = EnrolProStatus::ACTIVE)
+      ->forAll(pe |
+        let coreCred : Integer =
+          Enrolment.allInstances()
+            ->select(e | e.student = self
+                       and e.enrolStatus = EnrolStatus::COMPLETED
+                       and e.offering.module.type = CourseType::CORE
+                       and e.grade <> 'F' and e.grade <> 'I' and e.grade <> 'W')
+            ->collect(e | e.offering.module.credits)->sum()
+        in coreCred >= pe.program.minCoreCredits
+      )
+
+-- 11) Với mỗi Program ACTIVE, trong từng kỳ tín chỉ thuộc Program đó ≥ 12
+-- (Qua association CourseProgram: e.offering.module.program = pe.program)
+context Student
+inv inv11_MinPerActiveProgramPerTerm:
+  ProgramEnrolment.allInstances()
+    ->select(pe | pe.student = self and pe.enrolProStatus = EnrolProStatus::ACTIVE)
+    ->forAll(pe |
+      self.termRecords->forAll(str |
+        Enrolment.allInstances()
+          ->select(e | e.student = self and e.offering.term = str.term
+                         and e.offering.module.program = pe.program)
+          ->collect(e | e.offering.module.credits)->sum()
+        >= 12
+      )
+    )
+
+
+

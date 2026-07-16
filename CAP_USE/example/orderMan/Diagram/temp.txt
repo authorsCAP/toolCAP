@@ -1,0 +1,427 @@
+model OrderManV1
+
+-- ======================
+-- ENUMERATIONS
+-- ======================
+enum OrderStatus {PENDING, CONFIRMED, PACKED, SHIPPED, DELIVERED, CANCELLED}
+enum PaymentStatus {PENDING, PROCESSING, COMPLETED, FAILED, REFUNDED}
+enum ShipmentStatus {PENDING, IN_TRANSIT, DELIVERED}
+enum PaymentMethod {CREDIT_CARD, DEBIT, CREDIT}
+enum Priority {NORMAL, RUSH, EXPRESS}
+
+-- ======================
+-- CORE CLASSES
+-- ======================
+
+class Customer
+attributes
+    id              : Integer
+    name            : String
+    email           : String
+    totalPurchases  : Real  derived = 
+        self.orders->select(o | o.status = OrderStatus::DELIVERED)
+                   ->collect(o | o.finalAmount)->sum()
+    loyaltyPoints   : Integer  derived = (self.totalPurchases/100).floor()
+    lifetimeValue   : Real  derived = self.totalPurchases
+    status          : String
+    isPremium       : Boolean
+    verified        : Boolean
+    blacklisted     : Boolean
+    suspended       : Boolean
+    registrationDate: String
+    membershipDuration: Integer
+    accountAge      : Integer
+    activated       : Boolean
+    activationDate  : String
+    dataConsent     : Boolean
+    creditLimit     : Real
+    dailyLimit      : Real
+    creditScore     : Integer
+    annualVolume    : Real
+end
+class Address
+attributes
+    id              : Integer
+    line            : String
+    city             : String
+    country          : String
+    postalCode      : Real
+end
+
+class Product
+attributes
+    id             : Integer
+    name           : String
+    sku            : String
+    unitPrice      : Real
+    unitCost       : Real
+    weight         : Real
+    stockQty       : Integer
+    reorderPoint   : Integer
+    status         : String
+    availableSale  : Boolean
+    returnable     : Boolean
+    exportAllowed  : Boolean
+    seasonal       : Boolean
+    seasonStart    : String
+    seasonEnd      : String
+    stockValue     : Real  derived = self.unitCost * self.stockQty
+end
+
+class Order
+attributes
+    id             : Integer
+    orderNo        : String
+    orderDate      : String
+    subtotal       : Real  derived = 
+        OrderItem.allInstances()
+            ->select(i | i.order = self)
+            ->collect(i | i.unitPrice * i.quantity)->sum()
+    taxAmount      : Real
+    shippingCost   : Real
+    discount       : Real
+    finalAmount    : Real  derived = 
+        self.subtotal + self.taxAmount + self.shippingCost - self.discount
+    status         : OrderStatus
+    priority       : Priority
+    processedDate  : String
+    mgrApproved    : Boolean
+    creditApproved : Boolean
+    cancelReason   : String
+    refundDone     : Boolean
+    payAttempts    : Integer
+operations
+    itemsTotal(): Real =
+    OrderItem.allInstances()
+        ->select(oi | oi.order = self)
+        ->collect(oi | oi.quantity * oi.unitPrice)->sum()
+    dueAmount(): Real =
+    self.subtotal + self.taxAmount + self.shippingCost - self.discount
+end
+
+associationclass OrderItem
+between
+    Order[1] role order
+    Product[*] role product
+attributes
+    id          : Integer
+    quantity    : Integer
+    unitPrice   : Real
+    status      : String
+    shipRequired: Boolean
+end
+
+class Payment
+attributes
+    id           : Integer
+    amount       : Real
+    status       : PaymentStatus
+    processedDate: String
+    transactionId: String
+    payMethod    : PaymentMethod
+    validated    : Boolean
+    success      : Boolean  derived = (self.status = PaymentStatus::COMPLETED and self.validated)
+end
+
+class Shipment
+attributes
+    id             : Integer
+    trackingNo     : String
+    estDelivery    : String
+    deliveryDate   : String
+    delivered      : Boolean
+    shipMethod     : String
+    expedited      : Boolean
+    attempts       : Integer
+    deliveryFailed : Boolean
+    status         : ShipmentStatus
+    isDelivered    : Boolean  derived = (self.status = ShipmentStatus::DELIVERED and self.delivered)
+end
+
+class Supplier
+attributes
+    id            : Integer
+    name          : String
+    status        : String
+    contractValid : Boolean
+    rating        : Real
+    minLeadTime   : Integer
+    maxLeadTime   : Integer
+    avgLeadTime   : Real  derived = (self.minLeadTime + self.maxLeadTime) / 2
+end
+
+-- ======================
+-- ASSOCIATIONS
+-- ======================
+
+associationclass CustomerAddress
+between
+  Customer[1] role customer
+  Address [1] role address 
+attributes 
+  type : String -- BILLING/SHIPPING 
+  isDefault : Boolean
+end
+association CustomerOrders
+between
+    Customer[1] role customer
+    Order[*]   role orders
+end
+
+association OrderPayment
+between
+    Order[1]   role order
+    Payment[*] role payments
+end
+
+association OrderShipment
+between
+    Order[1]   role order
+    Shipment[*] role shipments
+end
+
+association ProductSupplier
+between
+    Product[*] role product
+    Supplier[1] role supplier
+end
+
+constraints
+
+-- OrderManV1 — CLEAN SET (no operations calls; deduplicated)
+-- Scope: keep business constraints; remove/avoid calls to operations (e.g., itemsTotal(), dueAmount()).
+-- We keep equalities to derived attributes (subtotal, finalAmount, stockValue, success, isDelivered)
+-- because they are part of the data model.
+
+constraints
+
+-- =====================
+-- A) SUM
+-- =====================
+context Order
+inv om01_SubtotalMatchesItems:
+  self.subtotal =
+    OrderItem.allInstances()->select(oi | oi.order = self)
+      ->collect(oi | oi.unitPrice * oi.quantity)->sum()
+----============SUMPRODUC
+
+context Order
+inv om02_FinalAmountFormula:
+  self.finalAmount = self.subtotal + self.taxAmount + self.shippingCost - self.discount
+
+context Order
+inv om05_NonNegativeMoney:
+  self.taxAmount >= 0 and self.shippingCost >= 0 and self.discount >= 0
+
+context Order
+inv om06_DiscountBoundedBySubtotal:
+  self.discount <= self.subtotal
+
+context OrderItem
+inv om07_OrderItemMoneyNonNegative:
+  self.unitPrice >= 0 and self.quantity > 0
+
+context Payment
+inv om08_PaymentAmountPositive:
+  self.amount > 0
+
+context Product
+inv om09_ProductStockValueConsistency:
+  self.stockValue = self.unitCost * self.stockQty
+
+context Product
+inv om59_ProductUnitPriceVsCost:
+  self.unitPrice >= self.unitCost
+
+context Order
+inv om60_OrderNonNegativeFinal:
+  self.finalAmount >= 0
+
+-- =====================
+-- B) PREREQUISITE / GATING
+-- =====================
+context Order
+inv om10_ShipRequiresConfirmation:
+  (self.status = OrderStatus::SHIPPED or self.status = OrderStatus::DELIVERED)
+  implies (self.status <> OrderStatus::PENDING and self.status <> OrderStatus::CANCELLED)
+
+context Order
+inv om11_PackRequiresMgrApproval:
+  self.status = OrderStatus::PACKED implies self.mgrApproved = true
+
+context Order
+inv om12_ShipRequiresPaymentSuccess:
+  self.status = OrderStatus::SHIPPED implies
+    self.payments->exists(p | p.status = PaymentStatus::COMPLETED and p.validated = true and p.amount > 0)
+
+context Order
+inv om13_DeliveredRequiresShipmentDelivered:
+  self.status = OrderStatus::DELIVERED implies self.shipments->exists(s | s.isDelivered = true)
+
+context Order
+inv om14_RefundRequiresCompletedPayment:
+  self.refundDone = true implies self.payments->exists(p | p.status = PaymentStatus::COMPLETED)
+
+context Order
+inv om15_CreditApprovalForHighValue:
+  (self.finalAmount > self.customer.creditLimit) implies self.creditApproved = true
+
+context OrderItem
+inv om67_ShipRequiredItemNeedsAvailableStock:
+  self.shipRequired = true implies
+    (self.product.availableSale = true and self.product.stockQty >= self.quantity)
+
+context OrderItem
+inv om68_ExportRequiresAllowed:
+  self.shipRequired = true implies self.product.exportAllowed = true
+
+context Product
+inv om69_SupplierContractValidForSale:
+  self.availableSale = true implies
+    (not self.supplier.oclIsUndefined() and self.supplier.contractValid = true)
+
+context Order
+inv om70_RushRequiresMgrApproval:
+  self.priority = Priority::RUSH implies self.mgrApproved = true
+
+context Shipment
+inv om71_ExpressImpliesExpedited:
+  self.shipMethod = 'EXPRESS' implies self.expedited = true
+
+context Order
+inv om72_CustomerMustBeVerifiedToConfirm:
+  self.status = OrderStatus::CONFIRMED implies self.customer.verified = true
+
+-- =====================
+-- C) SCHEDULE / TIME
+-- =====================
+context Order
+inv om16_ProcessedDateAfterOrderDate:
+  not self.processedDate.oclIsUndefined() implies not self.orderDate.oclIsUndefined()
+
+context Shipment
+inv om17_ShipmentDatesOnDelivery:
+  self.status = ShipmentStatus::DELIVERED implies
+    (self.delivered = true and not self.deliveryDate.oclIsUndefined())
+
+context Shipment
+inv om18_AttemptsWhenDeliveryFailed:
+  self.deliveryFailed = true implies self.attempts > 0
+
+context Shipment
+inv om19_EstDeliveryRequiredIfExpedited:
+  self.expedited = true implies not self.estDelivery.oclIsUndefined()
+
+context Order
+inv om80_ConfirmedHasProcessedDate:
+  self.status = OrderStatus::CONFIRMED implies not self.processedDate.oclIsUndefined()
+
+context Order
+inv om81_OrderDateNotEmpty:
+  not self.orderDate.oclIsUndefined() and self.orderDate <> ''
+
+-- =====================
+-- D) ELIGIBILITY
+-- =====================
+context Order
+inv om22_CustomerNotBlacklisted:
+  self.customer.blacklisted = false
+
+context Order
+inv om23_CustomerActivatedAndVerified:
+  self.customer.activated = true and self.customer.verified = true
+
+context Order
+inv om24_DailyLimitCheck:
+  self.finalAmount <= self.customer.dailyLimit
+
+context Order
+inv om83_ExpressShippingEligibility:
+  self.shipments->exists(s | s.shipMethod = 'EXPRESS')
+  implies (self.finalAmount >= 100 or self.customer.isPremium)
+
+context Payment
+inv om84_CreditPurchaseEligibility:
+  self.payMethod = PaymentMethod::CREDIT
+  implies (self.amount <= self.order.customer.creditLimit and self.order.customer.creditScore >= 650)
+
+-- =====================
+-- E) RETRY / FAILURE
+-- =====================
+context Order
+inv om25_PaymentRetryCap:
+  self.payAttempts <= 5
+
+context Order
+inv om26_NoShipIfOnlyFailedPayments:
+  (self.payments->exists(p | p.status = PaymentStatus::FAILED)
+   and self.payments->forAll(p | p.status <> PaymentStatus::COMPLETED))
+  implies self.status <> OrderStatus::SHIPPED
+
+-- =====================
+-- F) SIZE / CARDINALITY
+-- =====================
+context Order
+inv om27_OrderMustHaveAtLeastOneItem:
+  OrderItem.allInstances()->exists(oi | oi.order = self)
+
+context Order
+inv om94_MaxItemsPerOrder:
+  OrderItem.allInstances()->select(oi | oi.order = self)->size() <= 50
+
+context Supplier
+inv om96_SupplierHasAtLeastOneProduct:
+  ProductSupplier.allInstances()->exists(ps | ps.supplier = self)
+
+-- =====================
+-- G) STATUS CONSISTENCY
+-- =====================
+context Order
+inv om31_CancelRequiresReason:
+  self.status = OrderStatus::CANCELLED implies
+    (not self.cancelReason.oclIsUndefined() and self.cancelReason <> '')
+
+context Order
+inv om32_RefundAfterDeliveryPolicy:
+  self.refundDone = true implies
+    (self.status = OrderStatus::DELIVERED or self.status = OrderStatus::SHIPPED)
+
+context Payment
+inv om103_PaymentSuccessDerivedConsistency:
+  self.success = (self.status = PaymentStatus::COMPLETED and self.validated)
+
+context Shipment
+inv om104_ShipmentDeliveredDerivedConsistency:
+  self.isDelivered = (self.status = ShipmentStatus::DELIVERED and self.delivered)
+
+context Order
+inv om102_PendingHasNoShipments:
+  self.status = OrderStatus::PENDING implies self.shipments->isEmpty()
+
+context Product
+inv om105_ProductOutOfStockStatus:
+  (self.stockQty = 0) implies (self.status = 'OUT_OF_STOCK')
+
+-- =====================
+-- H) STRUCTURAL / UNIQUENESS / MANDATORY ENDS
+-- =====================
+context OrderItem
+inv om118_MandatoryEnds_OrderItem:
+  not self.order.oclIsUndefined() and not self.product.oclIsUndefined()
+
+context Payment
+inv om119_MandatoryEnds_OrderPayment:
+  not self.order.oclIsUndefined()
+
+context Shipment
+inv om120_MandatoryEnds_OrderShipment:
+  not self.order.oclIsUndefined()
+
+context CustomerAddress
+inv om121_MandatoryEnds_CustomerAddress:
+  not self.customer.oclIsUndefined() and not self.address.oclIsUndefined()
+
+context Customer
+inv om123_OnlyOneDefaultAddressPerType:
+  CustomerAddress.allInstances()->select(ca | ca.customer = self and ca.isDefault = true and ca.type = 'BILLING')->size() <= 1 and
+  CustomerAddress.allInstances()->select(ca | ca.customer = self and ca.isDefault = true and ca.type = 'SHIPPING')->size() <= 1

@@ -1,0 +1,207 @@
+model CourseManCore
+
+-- ======================
+-- ENUMERATIONS
+-- ======================
+enum StudentStatus {ENROLLED, GRADUATED, PROBATION, SUSPENDED}
+enum CourseLevel {BASIC, ADVANCED}
+enum CourseType {CORE, ELECTIVE}
+enum EnrolStatus {PLANNED, ACTIVE, COMPLETED, WITHDRAWN}
+enum EnrolProStatus {ACTIVE, ON_LEAVE, COMPLETED, WITHDRAWN}
+enum AcademicStatus {GOOD, PROBATION}
+
+-- ======================
+-- CORE CLASSES
+-- ======================
+
+class Student
+attributes
+    studentId     : String
+    name          : String
+    email         : String
+    studentStatus        : StudentStatus
+    totalCreditsCompleted : Integer
+    cumulativeGPA         : Real
+    overallStatus         : AcademicStatus
+    balance               : Real
+    aidCap                : Real
+end
+
+class CourseModule
+attributes
+    moduleCode    : String
+    title         : String
+    credits       : Integer
+    tuitionFee    : Real
+    level         : CourseLevel
+    type          : CourseType
+    minPassScore: Real
+    
+end
+
+class CourseOffering
+attributes
+  offeringId    : Integer
+end
+
+class Program
+attributes
+    programCode   : String
+    programName   : String
+    totalCredits  : Integer
+    minGPA        : Real
+    tuitionCap    : Real
+    maxWithdrawals: Integer
+    minCoreCredits: Integer
+    maxElectiveCredits : Integer
+end
+
+class AcademicTerm
+attributes
+  termId        : String
+  semester      : String
+  year          : Integer
+  startDate     : Date
+  endDate       : Date
+end
+
+class StudentTermRecord
+attributes
+  termCredits     : Integer
+  tuitionTotal    : Real
+  gpa             : Real
+  withdrawals     : Integer
+  academicStatus  : AcademicStatus
+end
+
+class SClass
+attributes
+  classId       : Integer
+  schedule      : String
+  room          : String
+  minStudents   : Integer
+  maxStudents   : Integer
+  sclassStatus  : String
+end
+class Instructor
+attributes
+    instructorId  : String
+    name          : String
+    email         : String
+    availability  : String
+    workloadLimit : Integer
+    
+end
+
+-- ======================
+-- ASSOCIATION CLASS
+-- ======================
+
+associationclass Enrolment
+between
+    Student[1] role student
+    CourseOffering[1] role offering
+attributes
+    enrolId       : Integer
+    enrolStatus   : EnrolStatus
+    grade         : String      
+    scholarship   : Real
+    attempt : String
+    withdrawDate: Date
+end
+associationclass ProgramEnrolment
+between
+    Student[1] role student
+    Program[1] role program
+attributes
+    progEnrolId    : Integer
+    admissionTerm  : String      -- ví dụ "Fall-2025"
+    enrolProStatus   : EnrolProStatus
+end
+
+-- ===============================================
+-- DATA TYPES
+-- ===============================================
+
+dataType Date
+  operations
+    Date(day: Integer, month : Integer, year : Integer)
+    pre: day >= 1 and day <= 31
+    pre: month >= 1 and month <= 12
+end
+
+dataType Time
+  operations
+    Time(hour: Integer, minute: Integer, second: Integer)
+    pre: hour >= 0 and hour < 24
+    pre: minute >= 0 and minute < 60
+    pre: second >= 0 and second < 60
+end
+
+-- ======================
+-- ASSOCIATIONS
+-- ======================
+
+association Offers
+between
+  CourseModule[1] role module
+  CourseOffering[*] role offerings
+end
+
+association Prerequisites
+between
+  CourseModule[*] role modules
+  CourseModule[*] role prerequisites
+end
+
+association CourseProgram
+between
+  CourseModule[*] role modules
+  Program[1] role program
+end
+
+association ClassOffering
+between
+  SClass[*] role classes
+  CourseOffering[1] role offering
+end
+
+association StudentTerm
+between
+  Student[1] role student
+  StudentTermRecord[*] role termRecords
+end
+
+association TermOffering
+between
+  AcademicTerm[1] role term
+  CourseOffering[*] role offerings
+end
+
+association TermRecordTerm
+between
+  StudentTermRecord[*] role termRecords
+  AcademicTerm[1] role term
+end
+association Teaching
+between
+    CourseOffering[*] role offerings
+    Instructor[1] role instructor
+end
+--association ProgramEnrolmentTerm
+--between
+ --   ProgramEnrolment[*] role progEnrolments
+--    AcademicTerm[1]     role admissionTerm
+--end
+association StudentClass
+between
+    Student[*] role students
+    SClass[*]  role classes
+end
+-- ======================
+-- CONSTRAINTS
+-- ======================
+
+constraints
+
+

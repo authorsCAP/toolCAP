@@ -1,0 +1,206 @@
+@startuml
+' ========================================
+' CourseMan – USE Model (Normalized)
+' Based on user's list, normalized per DDD/UML best practices
+' ========================================
+skinparam classAttributeIconSize 0
+hide circle
+hide empty members
+
+' ---------- Enums ----------
+enum StudentStatus { 
+ENROLLED 
+GRADUATED
+PROBATION 
+SUSPENDED }
+enum EnrolStatus { PLANNED 
+ACTIVE 
+COMPLETED 
+WITHDRAWN }
+enum CourseLevel { BASIC 
+ADVANCED }
+enum CourseType { CORE 
+ELECTIVE }
+enum AcademicStatus { GoodStanding
+Probation
+Dismissed 
+Graduated }
+
+' ---------- Value Objects ----------
+class AcademicTerm <<ValueObject>> {
+  +semester: String
+  +year: Integer
+  +startDate: Date
+  +endDate: Date
+}
+
+class Money <<ValueObject>> {
+  +amount: Real
+  +currency: String
+}
+
+class Schedule <<ValueObject>> {
+  +days: String      ' e.g., Mon/Wed/Fri
+  +startTime: Time
+  +endTime: Time
+}
+
+class Room <<ValueObject>> {
+  +code: String
+  +capacity: Integer
+}
+
+' ---------- Core Entities ----------
+class Department {
+  +departmentId: String
+  +departmentName: String
+}
+
+class Program {
+  +programCode: String
+  +programName: String
+  +totalCredits: Integer
+  +minGPA: Real
+  +tuitionCap: Real
+}
+
+class ProgramEnrollment {
+  +isPrimary: Boolean
+  +startTerm: AcademicTerm
+  +endTerm: AcademicTerm?
+  +status: String
+}
+
+class Student {
+  +studentId: String
+  +name: String
+  +email: String
+  +year: Integer
+  +status: StudentStatus
+}
+
+class StudentAcademicRecord {
+  +totalCreditsCompleted: Integer
+  +cumulativeGPA: Real
+  +status: AcademicStatus
+}
+
+class StudentTermRecord {
+  +term: AcademicTerm
+  +termCredits: Integer
+  +tuitionTotal: Real
+  +gpa: Real
+  +withdrawals: Integer
+  +academicStatus: AcademicStatus
+}
+
+class StudentAccount {}
+
+abstract class AccountEntry {
+  +amount: Money
+  +postedAt: DateTime
+  +term: AcademicTerm
+  +ref: String
+}
+class TuitionCharge
+class ScholarshipCredit
+class Payment
+
+class Instructor {
+  +instructorId: String
+  +name: String
+  +availability: Schedule
+}
+
+class CourseModule {
+  +moduleCode: String
+  +title: String
+  +credits: Integer
+  +tuitionFee: Real
+  +level: CourseLevel
+  +type: CourseType
+}
+
+class CourseOffering {
+  +offeringId: Integer
+  +capacity: Integer
+}
+
+class SClass {
+  +classId: Integer
+  +schedule: Schedule
+  +room: Room
+  +minStudents: Integer
+  +maxStudents: Integer
+  +status: String      ' SCHEDULED / ACTIVE / CANCELLED
+}
+
+class Enrolment {
+  +enrolId: Integer
+  +status: EnrolStatus
+}
+
+class GradeEntry {
+  +letter: String
+  +points: Real
+  +passed: Boolean
+}
+
+' ---------- Associations ----------
+' Department relations
+Department "1" -- "0..*" Program : owns
+Department "1" -- "0..*" CourseModule : curates
+Department "1" -- "0..*" Instructor : employs
+Department "0..1" -- "0..*" Department : parentDepartment
+
+' Program & Student
+Student "1" -- "0..*" ProgramEnrollment : programs
+Program "1" -- "0..*" ProgramEnrollment : enrollments
+
+' Records & Accounts
+Student "1" -- "1" StudentAcademicRecord : academicRecord
+Student "1" -- "0..*" StudentTermRecord : termRecords
+Student "1" -- "1" StudentAccount : account
+StudentAccount "1" -- "0..*" AccountEntry : entries
+AccountEntry <|-- TuitionCharge
+AccountEntry <|-- ScholarshipCredit
+AccountEntry <|-- Payment
+
+' Courses / Offerings / Classes
+Program "1" -- "0..*" CourseModule : includes
+CourseModule "*" -- "*" CourseModule : Prerequisite
+CourseModule "1" -- "0..*" CourseOffering : offerings
+CourseOffering "*" --> "1" AcademicTerm : term
+CourseOffering "1" -- "0..*" SClass : sections
+SClass "*" -- "1" Instructor : taughtBy
+
+' Enrolments & Grades
+Student "1" -- "0..*" Enrolment : enrols
+CourseOffering "1" -- "0..*" Enrolment : registrations
+Enrolment "0..1" -- "1" SClass : assignedTo
+Enrolment "1" -- "0..1" GradeEntry : grade
+
+' ---------- Notes / Normalization decisions ----------
+note right of Enrolment
+  No duplicated term/program here.
+  Term comes from CourseOffering.term (AcademicTerm).
+  Program context resolved via ProgramEnrollment active in that term.
+end note
+
+note top of StudentAccount
+  Balance/outstanding derived from AccountEntry
+  (TuitionCharge, ScholarshipCredit, Payment) aggregated per term.
+end note
+
+note right of CourseOffering
+  semester/year normalized to AcademicTerm.
+end note
+
+note right of GradeEntry
+  Replaces raw grade:String.
+  Scholarship is posted via ScholarshipCredit in ledger,
+  not a field on Enrolment.
+end note
+
+@enduml
+

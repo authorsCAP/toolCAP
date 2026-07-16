@@ -1,0 +1,414 @@
+model CourseMan
+
+-- ===============================================
+-- CORE CLASSES
+-- ===============================================
+
+class Student
+attributes
+    id : Integer
+    name : String
+    email : String
+    
+    -- Academic Progress Tracking (Type 1,2,8,11)
+    completedCredits : Integer
+    totalCreditsCompleted : Integer
+    academicStatus : String              -- 'GOOD_STANDING', 'PROBATION', 'SUSPENDED'
+    passedCourses : Integer
+    
+    -- Semester & Time Management (Type 2,3,9,10)
+    currentSemester : Integer
+    academicLevel : Integer              -- 1,2,3,4 (year level)
+    GPA : Real
+    
+    -- Department & Major Tracking (Type 12)
+    department : String              
+    major : String
+end
+
+class CourseModule
+attributes
+    id : Integer
+    name : String
+    code : String                      
+    credits : Integer
+    description : String
+    
+    -- Prerequisite Management (Type 1,2,4,5,6,8)
+    prerequisites : Set(CourseModule)          -- Self-reference
+    requiredGrade : String               -- 'A', 'B+', 'B', 'C+', 'C'
+    requiredCredits : Integer            -- Min credits before taking this course
+    requiredPrerequisites : Integer      -- Min number of prerequisites to satisfy
+    
+    -- Dynamic Requirements (Type 2)
+    minimumSemester : Integer            -- Earliest semester to take
+    requiredLevel : Integer              -- Academic level requirement
+    minimumGPA : Real                    -- Min GPA to enroll
+    
+    -- Depth Control (Type 6)
+    maxDepth : Integer                   -- Max prerequisite chain depth
+    
+    -- Mutual Exclusion (Type 7)
+    excludedModules : Set(CourseModule)        -- Mutually exclusive courses
+    alternativeCourses : Set(CourseModule)     -- Alternative/equivalent courses
+    courseGroup : String                 -- Grouping for alternatives
+    
+    -- Quantity Thresholds (Type 8)
+    satisfactionThreshold : Integer      -- Min prerequisites that must be satisfied
+    
+    -- Time Window Management (Type 9)
+    maxGapSemesters : Integer           -- Max semesters between prereq and this course
+    validityPeriod : Integer            -- How long prereq knowledge remains valid
+    
+    -- Parallel Execution - Corequisites (Type 10)
+    corequisites : Set(CourseModule)          -- Courses that must be taken together
+    concurrentCourses : Set(CourseModule)     -- Courses taken in same semester
+    
+    -- Special Course Types (Type 11)
+    isCapstone : Boolean                -- Capstone project course
+    isThesis : Boolean                  -- Thesis course
+    isFinalProject : Boolean            -- Final project course
+    
+    -- Course Classification (Type 12)
+    courseType : String                 -- 'CORE', 'ADVANCED', 'ELECTIVE', 'BASIC'
+    level : String                      -- 'BASIC', 'INTERMEDIATE', 'ADVANCED'
+    department : String                
+    
+    -- Additional Properties
+    difficulty : String                 -- 'EASY', 'MEDIUM', 'HARD'
+    workloadHours : Integer             -- Expected weekly hours
+end
+
+class SClass
+attributes
+    id : Integer
+    name : String
+    sectionNumber : String
+    maxStudents : Integer
+    currentEnrollment : Integer
+    semester : Integer
+    instructor : String
+    schedule : String
+    room : String
+end
+
+class Program
+attributes
+    id : Integer
+    name : String                       
+    code : String                       
+    degreeType : String                 -- 'BS', 'MS', 'PhD'
+    
+    -- Graduation Requirements (Type 11)
+    totalCredits : Integer              -- Total credits needed to graduate
+    capstoneThreshold : Real            -- Percentage before capstone (0.8 = 80%)
+    coreCreditsRequired : Integer       -- Min core credits
+    
+    -- Program Standards (Type 2)
+    minimumGPA : Real                   -- Min GPA for program
+    maxDuration : Integer               -- Max years to complete
+    graduationGPA : Real                -- Min GPA to graduate
+end
+
+-- ===============================================
+-- ASSOCIATION CLASSES
+-- ===============================================
+
+associationclass Enrolments
+between
+    Student[1..*] role student 
+    CourseModule[*] role course
+attributes
+    id : Integer
+    
+    -- Academic Performance (Type 1,8,12)
+    grade : String                     
+    gradePoints : Real              
+    status : String                     -- 'ENROLLED', 'COMPLETED', 'DROPPED', 'FAILED', 'WITHDRAWN'
+    
+    -- Time Tracking (Type 3,9,10)
+    semester : Integer                  -- Which semester taken (1,2,3,4,5,6,7,8)
+    academicYear : Integer             
+    
+    -- Performance Tracking (Type 2,9)
+    gpa : Real                     
+    attemptsCount : Integer            -- Number of times attempted
+    
+    -- Administrative
+    enrollmentDate : String
+    completionDate : String
+    withdrawalDate : String
+    
+    -- Satisfaction Tracking (Type 8)
+    prerequisitesSatisfied : Integer    -- Count of prereqs satisfied at enrollment
+end
+
+associationclass SClassRegistration
+between
+    Student[*] role student
+    SClass[1..*] role sclass
+attributes
+    id : Integer
+    registrationDate : String
+    status : String                     -- 'REGISTERED', 'DROPPED', 'COMPLETED'
+    semester : Integer
+    grade : String
+end
+
+-- ===============================================
+-- ASSOCIATIONS
+-- ===============================================
+
+-- Student-Program relationship
+association StudentProgram
+between
+    Student[*] role students
+    Program[1] role program
+end
+
+-- Course-SClass relationship
+association CourseSClass
+between
+    CourseModule[1] role course
+    SClass[*] role sections
+end
+
+-- Course Self-References (Prerequisites)
+association CoursePrerequisites
+between
+    CourseModule[*] role course
+    CourseModule[*] role prerequisites
+end
+
+-- Course Self-References (Exclusions)
+--association CourseExclusions
+--between
+--    CourseModule[*] role courseEx
+--    CourseModule[*] role excludedModules
+--end
+
+-- Course Self-References (Alternatives)
+--association CourseAlternatives
+--between
+--    CourseModule[*] role courseAl
+--    CourseModule[*] role alternativeCourses
+--end
+
+-- Course Self-References (Corequisites)
+--association CourseCorequisites
+--between
+ --   CourseModule[*] role courseCo
+--    CourseModule[*] role corequisites
+--end
+
+-- Course Self-References (Concurrent)
+--association CourseConcurrent
+--between
+ --   CourseModule[*] role coursecurr
+ --   CourseModule[*] role concurrentCourses
+--end
+
+constraints
+
+-- ===============================================
+-- Type 1: PrerequisiteSatisfied
+-- ===============================================
+context Student 
+inv T1_PrerequisiteSatisfied:
+  self.enrolments->forAll(e | e.course.prerequisites->forAll(p |
+    self.enrolments->exists(e2 | e2.course = p and 
+      e2.grade >= e.course.requiredGrade and
+      e2.status = 'COMPLETED')))
+
+-- ===============================================
+-- Type 2: DynamicRequirementThreshold
+-- ===============================================
+context Student
+inv T2_DynamicRequirementThreshold:
+  self.enrolments->forAll(e | e.course.prerequisites->forAll(p |
+    self.completedCredits >= p.requiredCredits and
+    self.currentSemester >= e.course.minimumSemester and
+    self.GPA >= e.course.minimumGPA and
+    self.academicLevel >= e.course.requiredLevel))
+
+-- ===============================================
+-- Type 3: NoReverseDependency
+-- ===============================================
+context Student 
+inv T3_NoReverseDependency:
+  self.enrolments->forAll(e1, e2 | 
+    e1.semester = e2.semester implies
+    (e1.course.prerequisites->excludes(e2.course) and
+     e2.course.prerequisites->excludes(e1.course)))
+
+-- ===============================================
+-- Type 4: NoSelfDependency
+-- ===============================================
+context CourseModule
+inv T4_NoSelfDependency:
+  not self.prerequisites->includes(self)
+
+-- ===============================================
+-- Type 5: NoCyclicDependency
+-- ===============================================
+context CourseModule
+inv T5_NoCyclicDependency:
+  self.prerequisites->closure(p | p.prerequisites)->excludes(self)
+
+-- ===============================================
+-- Type 6: MaxDependencyDepth
+-- ===============================================
+context CourseModule
+inv T6_MaxDependencyDepth:
+  self.prerequisites->closure(p | p.prerequisites)->size() <= self.maxDepth
+
+-- Alternative with fixed limit
+context CourseModule
+inv T6_MaxPrerequisiteDepth:
+  self.prerequisites->closure(p | p.prerequisites)->size() <= 3
+
+-- ===============================================
+-- Type 7: MutualExclusion
+-- ===============================================
+context Student
+inv T7_MutualExclusion:
+  self.enrolments->forAll(e1, e2 | 
+    not (e1.course.excludedModules->includes(e2.course)))
+
+-- Course Group Exclusion
+context Student
+inv T7_CourseGroupExclusion:
+  self.enrolments->forAll(e1, e2 | 
+    e1.course.courseGroup <> '' and e2.course.courseGroup <> '' implies
+    e1.course.courseGroup <> e2.course.courseGroup or e1 = e2)
+
+-- ===============================================
+-- Type 8: QuantityThresholdRequirement
+-- ===============================================
+context Student
+inv T8_QuantityThresholdRequirement:
+  self.enrolments->forAll(e |
+    let satisfiedPrereqs = e.course.prerequisites->select(p |
+      self.enrolments->exists(e2 | e2.course = p and 
+        e2.status = 'COMPLETED' and e2.grade >= 'C'))->size() in
+    satisfiedPrereqs >= e.course.requiredPrerequisites)
+
+-- ===============================================
+-- Type 9: TimeWindowConstraint
+-- ===============================================
+context Student
+inv T9_TimeWindowConstraint:
+  self.enrolments->forAll(e | e.course.prerequisites->forAll(p |
+    self.enrolments->exists(e2 | e2.course = p and 
+      e2.status = 'COMPLETED' and
+      (e.semester - e2.semester) <= e.course.maxGapSemesters)))
+
+-- Knowledge Validity
+context Student
+inv T9_KnowledgeValidity:
+  self.enrolments->forAll(e | e.course.prerequisites->forAll(p |
+    self.enrolments->exists(e2 | e2.course = p and 
+      e2.status = 'COMPLETED' and
+      (e.semester - e2.semester) <= p.validityPeriod)))
+
+-- ===============================================
+-- Type 10: ParallelExecutionConstraint
+-- ===============================================
+context Student
+inv T10_ParallelExecutionConstraint:
+  self.enrolments->forAll(e | e.course.corequisites->forAll(c |
+    self.enrolments->exists(e2 | e2.course = c and 
+      e2.semester = e.semester and
+      (e2.status = 'ENROLLED' or e2.status = 'COMPLETED'))))
+
+-- Concurrent Courses
+context Student
+inv T10_ConcurrentCoursesConstraint:
+  self.enrolments->forAll(e | e.course.concurrentCourses->forAll(cc |
+    self.enrolments->exists(e2 | e2.course = cc and 
+      e2.semester = e.semester)))
+
+-- ===============================================
+-- Type 11: CapstonePrerequisite
+-- ===============================================
+context Student
+inv T11_CapstonePrerequisite:
+  self.enrolments->forAll(e | e.course.isCapstone implies
+    self.completedCredits >= self.program.totalCredits * self.program.capstoneThreshold)
+
+-- Thesis Prerequisites  
+context Student
+inv T11_ThesisPrerequisite:
+  self.enrolments->forAll(e | e.course.isThesis implies
+    (self.completedCredits >= self.program.totalCredits * 0.8 and
+     self.GPA >= self.program.graduationGPA))
+
+-- Final Project Prerequisites
+context Student
+inv T11_FinalProjectPrerequisite:
+  self.enrolments->forAll(e | e.course.isFinalProject implies
+    self.academicLevel >= 4 and self.completedCredits >= 90)
+
+-- ===============================================
+-- Type 12: MajorSpecificPrerequisites
+-- ===============================================
+context Student
+inv T12_MajorSpecificPrerequisites:
+  self.enrolments->forAll(e | e.course.courseType = 'ADVANCED' implies
+    self.enrolments->exists(e2 | 
+      e2.course.courseType = 'CORE' and
+      e2.course.department = e.course.department and
+      e2.grade >= 'C' and
+      e2.status = 'COMPLETED'))
+
+-- Department Prerequisites
+context Student
+inv T12_DepartmentPrerequisites:
+  self.enrolments->forAll(e | e.course.department <> self.department implies
+    (e.course.level = 'BASIC' or 
+     self.enrolments->exists(e2 | e2.course.department = self.department and
+       e2.course.courseType = 'CORE' and e2.status = 'COMPLETED')))
+
+-- Advanced Level Prerequisites
+context Student
+inv T12_AdvancedLevelPrerequisites:
+  self.enrolments->forAll(e | e.course.level = 'ADVANCED' implies
+    self.completedCredits >= 60 and self.GPA >= 2.5)
+
+-- ===============================================
+-- ADDITIONAL CONSISTENCY CONSTRAINTS
+-- ===============================================
+
+-- Academic standing consistency
+context Student
+inv AcademicStandingConsistency:
+  (self.GPA < 2.0 implies self.academicStatus = 'PROBATION') and
+  (self.GPA >= 2.0 implies self.academicStatus = 'GOOD_STANDING')
+
+-- Enrollment status consistency
+context Enrolments
+inv EnrollmentStatusConsistency:
+  (self.status = 'COMPLETED' implies self.grade <> 'W' and self.completionDate <> '') and
+  (self.status = 'WITHDRAWN' implies self.grade = 'W' and self.withdrawalDate <> '')
+
+-- Valid semester ranges
+context Enrolments
+inv ValidSemesterRange:
+  self.semester >= 1 and self.semester <= 12
+
+-- SClass capacity
+context SClass
+inv SClassCapacity:
+  self.currentEnrollment <= self.maxStudents
+
+-- Course credits validation
+context CourseModule
+inv CourseCreditsValidation:
+  self.credits >= 1 and self.credits <= 6
+
+-- Program total credits validation
+context Program
+inv ProgramTotalCreditsValidation:
+  self.totalCredits >= 120 and self.totalCredits <= 200
+
+

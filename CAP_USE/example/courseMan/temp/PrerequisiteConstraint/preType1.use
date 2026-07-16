@@ -1,0 +1,89 @@
+model PreCourseMan
+
+class Student
+attributes
+    id : Integer
+    name : String
+end
+
+class CourseModule
+attributes
+    id : Integer
+    code : String
+    name : String
+    requiredGrade : String
+end
+
+class CourseOffering
+attributes
+    id : Integer
+    semester : String
+    year : Integer
+end
+
+associationclass Enrolment
+between
+   Student[1] role student 
+   CourseOffering[*] role offering
+    
+attributes
+    id : Integer
+    enrolStatus : EnrolStatus   -- enum: PLANNED, ACTIVE, COMPLETED, WITHDRAWN
+    grade  : String
+    term   : Integer
+end
+
+
+association Offers
+between
+    CourseModule[1]   role module       
+    CourseOffering[*] role offerings    
+end
+
+association Prerequisites
+between
+    CourseModule[*] role modules
+    CourseModule[*] role prerequisites
+end
+--=========================================================
+enum AcademicStatus {PROBATION, GOOD}
+enum StatusStudent  {GRADUATED, ENROLLED}
+enum CourseType     {CORE, ELECTIVE}
+enum CourseLevel    {BASIC, ADVANCED}
+enum EnrolStatus    {PLANNED, ACTIVE, COMPLETED, WITHDRAWN}
+--=========================================================
+-- DATA TYPE
+-- ===============================================
+dataType Date
+  operations
+    Date(day: Integer, month : Integer, year : Integer)
+    pre: day >= 1 and day <= 31
+    pre: month >= 1 and month <= 12
+end
+
+dataType Time
+  operations
+    Time(hour: Integer, minute: Integer, second: Integer)
+    pre: hour >= 0 and hour < 24
+    pre: minute >= 0 and minute < 60
+    pre: second >= 0 and second < 60
+end
+
+constraints
+context Student
+inv PrerequisiteSatisfied:
+  self.enrolment
+    ->select(e | e.enrolStatus = 'PLANNED' or e.enrolStatus = 'ACTIVE')
+    ->forAll(e |
+      let m : CourseModule = e.offering.module in
+      m.prerequisites->forAll(p |
+        self.enrolment
+          ->exists(e2 |
+            e2.offering.module = p and
+            e2.enrolStatus = 'COMPLETED' and
+            e2.term   < e.term and      -- đã hoàn thành trước thời điểm đăng ký hiện tại
+            e2.grade  >= m.requiredGrade
+          )
+      )
+    )
+

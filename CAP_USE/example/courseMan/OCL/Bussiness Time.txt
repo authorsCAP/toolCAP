@@ -1,0 +1,9 @@
+
+OCL Time constraints: govern govern temporal boundaries for system actions and participant status changes. They establish: 
+ 1. Defining permissible timeframes for resource disassociation requests;
+ 2. Linking temporal thresholds to monetary obligations;
+ 3. Enforcing timely financial fulfillment with consequences;
+ 4. Automatically adjusting allocations based on payment status;
+ 5. Flag-or-Deadline (Pay-or-LeadTime): An object is valid if (A) the flag/condition is met (Boolean flag) or (B) the deadline is at least N days away (lead time).
+ 6. Capping total participation timeframes in the system;
+ 7. Restricting cumulative temporary withdrawal periods.

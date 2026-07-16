@@ -1,0 +1,60 @@
+model TemplatePreConCourseMan
+
+--=====================
+-- ENUMS
+--=====================
+enum __matchType__ {Integer, Real, String}
+enum __constantStatus__ {PLANNED, ACTIVE, COMPLETED, PROBATION, GOOD}
+
+--=====================
+-- CLASSES
+--=====================
+
+-- Context class, ví dụ: Student
+class __ClassA__
+attributes
+
+end
+
+-- Target class, ví dụ: CourseModule
+class __ClassB__
+attributes
+
+end
+
+-- Optional dependent type, ví dụ: dùng nếu CourseModule có thuộc tính phụ (CourseOffering, Subject,...)
+class __ClassC__
+attributes
+--  __filterAttr__      : __matchType__   -- thuộc tính lọc, dùng trong rolePath
+  __valueRequire__    : __matchType__
+end
+
+-- associationclass (ví dụ: Enrolment)
+associationclass __ClassD__
+between
+  __ClassA__[1] role __roleA__     -- Student
+  __ClassB__[*] role __role1__     -- Offering/Module
+attributes
+  __filterAttr__       : __constantStatus__   -- enrolStatus
+  __curAttr__          : __matchType__              -- term hoặc chỉ số kỳ học hiện tại
+  __preAttr__          : __matchType__              -- giá trị cần so sánh (term để học trước)
+  __valueCompAttr__    : __matchType__        -- thuộc tính giá trị so sánh (grade)
+end
+
+--=====================
+-- ASSOCIATIONS
+--=====================
+association __Link__
+between
+  __ClassC__[1] role __role2__
+  __ClassB__[*] role __roleB__
+end
+-- Một môn học có thể có nhiều điều kiện tiên quyết
+association __Prereq__
+between
+  __ClassC__[*] role __roleC__
+  __ClassC__[*] role __rolPathPre__
+end
+
+
+

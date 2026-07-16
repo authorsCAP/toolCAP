@@ -1,0 +1,189 @@
+model sumCondTemplate
+class ClassA
+attributes
+	thresholdAttr : Integer
+	valStaAttr : ValStaAttr
+	valueAttr : Integer
+
+end
+class ClassB
+attributes
+	valCondAttr : ValCondAttr
+end
+class ClassC
+attributes
+	sumAttr:Integer
+	valTypeAttr : ValTypeAttr
+end
+associationclass ClassD
+between
+    ClassA[1] role role    
+    ClassB[*] role role1
+attributes
+	weightAttr : Integer
+end
+
+class ClassE
+attributes
+	derivedAttr : Integer
+end
+class ClassF
+attributes
+	matchAttr : Integer
+end
+
+
+association linkbc
+between
+	ClassB[*] role role12
+	ClassC[1] role role2
+end
+association linkae
+between
+	ClassA[1] role role13
+	ClassE[*] role role3
+end
+association linkbf
+between
+	ClassB[*] role role14
+	ClassF[1] role role4
+end
+association linkef
+between
+	ClassE[*] role role35
+	ClassF[1] role role4
+end
+association linkself
+between
+	ClassC[*] role role2self
+	ClassC[*] role preqRolPath
+end
+enum valueType {Integer, Real}
+enum ValCondAttr {True, False, Flag1, Flag2, CORE}
+enum ValTypeAttr {CORE}
+enum ValStaAttr {Status,Status1, Status2}
+
+-- ======================
+-- CONSTRAINTS
+-- ======================
+constraints
+
+context ClassA
+inv ivn1_TotalTuitionEqualsSum:
+  self.role3->forAll(str |
+    str.derivedAttr = ClassD.allInstances()
+        ->select(e | e.role = self and e.role1.role4 = str.role4)
+        ->collect(e | e.role1.role2.sumAttr)
+        ->sum()
+  )
+  
+context ClassA
+inv inv2_EQ_TotalEqualsSum:
+  let total = ClassD.allInstances()
+        ->select(e | e.role = self)
+        ->collect(e | e.role1.role2.sumAttr)->sum()
+  in self.valueAttr = total  -- ≤ Max Limit
+  
+context ClassA
+inv inv3_LE_WithinMaxLimit:
+  let s : Integer =
+    ClassD.allInstances()
+      ->select(e | e.role = self)
+      ->collect(e | e.role1.role2.sumAttr)->sum()
+  in s <= self.thresholdAttr    -- ≥ Min Threshold
+  
+context ClassA
+inv inv4_GE_AboveMinThreshold:
+  let s : Integer =
+    ClassD.allInstances()
+      ->select(e | e.role = self)
+      ->collect(e | e.role1.role2.sumAttr)->sum()
+  in s >= self.valueAttr
+
+-- Conditional (by status) with cap
+
+context ClassA
+inv inv5_Cond_ByStatus_Cap:
+  let s : Integer =
+    ClassD.allInstances()
+      ->select(e | e.role = self and e.role1.valCondAttr = ValCondAttr::True)
+      ->collect(e | e.role1.role2.sumAttr)->sum()
+  in (self.valStaAttr = ValStaAttr::Status1) implies s <= self.thresholdAttr
+
+-- By category (CORE) ≥ Min Core
+context ClassA
+inv inv6_ByCategory_GE_MinCore:
+  let coreinv : Integer =
+    ClassD.allInstances()
+      ->select(e | e.role = self and e.role1.role2.valTypeAttr = ValTypeAttr::CORE)
+      ->collect(e | e.role1.role2.sumAttr)->sum()
+  in coreinv >= self.thresholdAttr
+
+-- Global total ≤ derivedAttr (ClassE đại diện “thuộc tính dẫn xuất”)
+context ClassE
+inv inv7_Global_LE_DerivedAttr:
+  let total : Integer =
+    ClassD.allInstances()
+      ->collect(e | e.role1.role2.sumAttr)->sum()
+  in total <= self.derivedAttr
+
+-- Weighted sum ≤ threshold
+context ClassA
+inv inv8_Weighted_LE_ValueCap:
+  let weightedinv : Integer =
+    ClassD.allInstances()
+      ->select(e | e.role = self)
+      ->collect(e | e.role1.role2.sumAttr * e.weightAttr)->sum()
+  in weightedinv <= self.thresholdAttr
+
+-- Sync derivedAttr = total sum (ClassE)
+context ClassE
+inv inv9_Derived_SyncToTotal:
+  self.derivedAttr =
+    ClassD.allInstances()
+      ->collect(e | e.role1.role2.sumAttr)->sum()
+
+-- CORE percentage ≥ 50%
+
+ context ClassA
+inv inv10_PercentageRequirement:
+  let totalCore = ClassD.allInstances()
+    ->select(e | e.role = self and e.role1.role2.valTypeAttr = 'CORE')
+    ->collect(e | e.role1.role2.sumAttr)->sum(),
+    total = ClassD.allInstances()
+    ->select(e | e.role = self)
+    ->collect(e | e.role1.role2.sumAttr)->sum()
+  in totalCore / total >= 0.5
+
+-- Nested filtered sum ≤ threshold (theo self–prereq trên ClassC)
+context ClassA
+inv inv11_Nested_Filtered_LE_Threshold:
+  let s : Integer =
+    ClassD.allInstances()
+      ->select(e | e.role = self)
+      ->collect(e |
+         e.role1.role2.preqRolPath
+           ->select(x | x.valTypeAttr = ValTypeAttr::CORE)
+           ->collect(y | y.sumAttr)->sum()
+      )->sum()
+  in s <= self.thresholdAttr
+
+-- Liên kết A–E: tổng derivedAttr của các E liên quan ≤ threshold
+context ClassA
+inv inv12_With_LinkEF_LE_CompAttr:
+  let s : Integer =
+    ClassE.allInstances()
+      ->select(e | e.role13 = self)
+      ->collect(e | e.derivedAttr)->sum()
+  in s <= self.thresholdAttr
+
+-- Đếm số mục CORE ≤ 2
+context ClassA
+inv Count13_ByCategory_LE_2:
+  let cnt : Integer =
+    ClassD.allInstances()
+      ->select(e | e.role = self and e.role1.role2.valTypeAttr = ValTypeAttr::CORE)
+      ->size()
+  in cnt <= 2
+
+

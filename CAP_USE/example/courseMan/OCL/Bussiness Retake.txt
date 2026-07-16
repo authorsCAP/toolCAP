@@ -1,0 +1,9 @@
+Preventing re-enrollment in successfully completed resources without special authorization
+Prevent students from re-registering for a course they have already earned a high grade in, unless specifically approved, to avoid wasting resources and distorting progress.
+Requiring actors to re-attempt resources after multiple failures.
+Force students to re-register if the number of times they fail a course exceeds a threshold (\eg > 2), ensuring there is a remediation mechanism.
+Setting upper bounds on the number of permitted attempts at any resource.
+Set a ceiling on the number of times you take each course (e.g. ≤ 3) to maintain fairness and quality of progress.
+Allowing specialized alternative resources after multiple failures of advanced components.
+
+

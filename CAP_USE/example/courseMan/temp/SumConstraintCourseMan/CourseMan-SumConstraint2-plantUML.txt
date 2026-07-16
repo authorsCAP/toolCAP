@@ -1,0 +1,171 @@
+@startuml
+' ======================================
+' CourseMan – CORE PlantUML (Synced)
+' ======================================
+skinparam classAttributeIconSize 0
+hide circle
+hide empty members
+
+' ---------- Enums ----------
+enum StudentStatus {
+ENROLLED
+GRADUATED
+PROBATION
+SUSPENDED }
+enum ProgEnrollStatus {
+    Active
+    OnHold
+    Completed
+    Withdrawn
+}
+enum CourseType {
+    CORE
+    ELECTIVE
+}
+enum CourseLevel {
+    BASIC
+    ADVANCED
+}
+enum EnrolStatus {
+    PLANNED
+    ACTIVE
+    COMPLETED
+    WITHDRAWN
+}
+enum AcademicStatus {
+    GoodStanding
+    Probation
+    Dismissed
+    Graduated
+}
+
+' ---------- Value Object ----------
+class AcademicTerm <<ValueObject>> {
+  +semester: String
+  +year: Integer
+  +startDate: Date
+  +endDate: Date
+}
+
+' ---------- Core Classes ----------
+class Student {
+  +studentId: String
+  +name: String
+  +email: String
+  +year: Integer
+  +status: StudentStatus
+}
+
+class Program {
+  +programCode: String
+  +name: String
+  +level: ProgramLevel
+  +minCredits: Integer
+}
+
+enum ProgramLevel {
+Undergrad
+Postgrad }
+
+class ProgramEnrollment {
+  +isPrimary: Boolean
+  +startTerm: AcademicTerm
+  +endTerm: AcademicTerm?
+  +status: ProgEnrollStatus
+}
+
+class CourseModule {
+  +moduleCode: String
+  +title: String
+  +credits: Integer
+  +tuitionFee: Real
+  +type: CourseType
+  +level: CourseLevel
+}
+
+class CourseOffering {
+  +offeringId: Integer
+  +term: AcademicTerm
+  +capacity: Integer
+}
+
+class Enrolment {
+  +enrolId: Integer
+  +status: EnrolStatus
+}
+
+class GradeEntry {
+  +letter: String
+  +points: Real
+  +passed: Boolean
+}
+
+class StudentTermRecord {
+  +term: AcademicTerm
+  +termCredits: Integer
+  +tuitionTotal: Real
+  +gpa: Real
+  +withdrawals: Integer
+  +academicStatus: AcademicStatus
+}
+
+class StudentAcademicRecord {
+  +creditsTotal: Integer
+  +cumulativeGPA: Real
+}
+
+class StudentAccount {
+}
+
+abstract class AccountEntry {
+  +amount: Real
+  +currency: String
+  +postedAt: DateTime
+  +term: AcademicTerm?
+  +reference: String
+}
+class TuitionCharge
+class ScholarshipCredit
+class Payment
+
+' ---------- Associations & Multiplicities ----------
+' Programs
+Student "1" -- "0..*" ProgramEnrollment : programs
+Program "1" -- "0..*" ProgramEnrollment : enrollments
+
+' Courses / Offerings
+CourseModule "1" -- "0..*" CourseOffering : offerings
+CourseOffering "*" --> "1" AcademicTerm : term
+
+' Enrolments & Grades
+Student "1" -- "0..*" Enrolment : enrols
+CourseOffering "1" -- "0..*" Enrolment : registrations
+Enrolment "1" -- "0..1" GradeEntry : grade
+
+' Records
+Student "1" -- "0..*" StudentTermRecord : termRecords
+StudentTermRecord "*" --> "1" AcademicTerm : term
+Student "1" -- "1" StudentAcademicRecord : academicRecord
+
+' Accounts
+Student "1" -- "1" StudentAccount : account
+StudentAccount "1" -- "0..*" AccountEntry : entries
+AccountEntry <|-- TuitionCharge
+AccountEntry <|-- ScholarshipCredit
+AccountEntry <|-- Payment
+
+' ---------- Notes ----------
+note right of Enrolment
+  No duplicated term or program here.
+  Term comes from CourseOffering.term.
+  Program context comes from active ProgramEnrollment at that term.
+end note
+
+note top of StudentAccount
+  Balance/outstanding are derived from AccountEntry
+  (TuitionCharge, ScholarshipCredit, Payment),
+  aggregated per term and overall.
+end note
+
+@enduml
+

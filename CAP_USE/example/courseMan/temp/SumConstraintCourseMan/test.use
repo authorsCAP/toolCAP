@@ -1,0 +1,185 @@
+model SumConCourseMan
+
+-- ====================
+-- ENUMERATIONS
+-- ====================
+enum AcademicStatus {PROBATION, GOOD}
+enum StatusStudent  {GRADUATED, ENROLLED}
+enum CourseType     {CORE, ELECTIVE}
+enum CourseLevel    {BASIC, ADVANCED}
+enum EnrolStatus    {PLANNED, ACTIVE, COMPLETED, WITHDRAWN}
+
+-- ====================
+-- CLASSES
+-- ====================
+
+class Student
+attributes
+    id                 : Integer
+    name               : String
+    curSemester        : String
+    tuitionCap         : Real
+    isExemptMinCredits : Boolean
+    curYear            : Integer
+    studentStatus      : StatusStudent
+    aidCap             : Real
+    isDualMajor        : Boolean
+    majorPrimary       : String
+   tuitionTotal       : Real
+  termCredits        : Integer
+  creditsTotal       : Integer
+   gpaPrevTerm        : Real
+  withdrawalsPrevTerm: Integer
+  acadStatus         : AcademicStatus
+ --   /tuitionTotal       : Real
+ --   /termCredits        : Integer
+ --   /creditsTotal       : Integer
+ --   /gpaPrevTerm        : Real
+ --   /withdrawalsPrevTerm: Integer
+  --  /acadStatus         : AcademicStatus
+end
+
+class CourseModule
+attributes
+    id          : Integer
+    code        : String
+    name        : String
+    credits     : Integer
+    tuitionFee  : Real
+    type        : CourseType      
+    level       : CourseLevel    
+    programCode : String
+end
+
+class CourseOffering
+attributes
+    id       : Integer
+    semester : String
+    year     : Integer
+end
+
+associationclass Enrolment
+between
+    Student[1] role student      
+    CourseOffering[*] role offering    
+attributes
+    id            : Integer
+    enrolStatus   : EnrolStatus       
+    grade         : String
+    scholarship   : Real
+    program       : String
+end
+
+association Offers
+between
+    CourseModule[1] role module
+    CourseOffering[*] role offerings
+end
+
+association Prerequisites
+between
+    CourseModule[*] role modules
+    CourseModule[*] role prerequisites
+end
+
+-- ====================
+-- CONSTRAINTS / OCL
+-- ====================
+
+constraints
+
+-- Tổng học phí hiện tại = tổng tuitionFee
+context Student
+inv SumConType1_TotalTuitionEqualsSum:
+let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.tuitionFee)->sum()
+in s = self.tuitionTotal
+
+-- Tổng tín chỉ đăng ký = tổng credits kỳ hiện tại
+context Student
+inv SumConType2_TotalCreditsEqualsSum:
+self.termCredits = 
+    self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+
+-- Giới hạn học phí không vượt trần
+context Student
+inv SumConType3_TuitionWithinLimit:
+let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.tuitionFee)->sum()
+in s <= self.tuitionCap
+
+-- Tối đa 30 tín chỉ mỗi kỳ
+context Student
+inv SumConType4_MaxCreditsPerTerm:
+let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+in s <= 30
+
+-- Tối thiểu 15 tín chỉ nếu không được miễn
+context Student
+inv SumConType5_MinCreditsUnlessExempt:
+let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+in (not self.isExemptMinCredits) implies s >= 15
+
+-- Sinh viên năm nhất đăng ký từ 12-18 tín chỉ
+context Student
+inv SumConType6_Year1_12to18:
+let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+in self.curYear = 1 implies (s >= 12 and s <= 18)
+
+-- Tổng học bổng không vượt quá aidCap
+context Student
+inv SumConType7_FinancialAidTotal:
+let totalAid = self.enrolment
+    ->collect(e | e.scholarship)->sum()
+in totalAid <= self.aidCap
+
+-- Nếu GPA kỳ trước < 2.5 thì tối đa 20 tín chỉ
+context Student
+inv SumConType8_GPAPreviousSemester:
+let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+in self.gpaPrevTerm < 2.5 implies s <= 20
+
+-- Sinh viên PROBATION chỉ được học tối đa 2 môn ADVANCED
+context Student
+inv SumConType9_ProbationAdvancedLimit:
+let sum = self.enrolment
+    ->select(e | e.offering.module.level = CourseLevel::ADVANCED and e.offering.semester = self.curSemester)
+    ->collect(e | 1)->sum()
+in self.acadStatus = AcademicStatus::PROBATION implies sum <= 2
+
+-- Nếu rút quá 2 môn kỳ trước, giới hạn 12 tín chỉ
+context Student
+inv SumConType10_WithdrawalPenalty:
+let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+in self.withdrawalsPrevTerm > 2 implies s <= 12
+
+-- Phải hoàn thành >=50% tín chỉ CORE khi tốt nghiệp
+context Student
+inv SumConType11_CoreCreditsRequirement:
+let coreCredits = self.enrolment
+    ->select(e | e.offering.module.type = CourseType::CORE)
+    ->collect(e | e.offering.module.credits)->sum()
+in self.studentStatus = StatusStudent::GRADUATED implies coreCredits >= self.creditsTotal * 0.5
+
+-- Nếu có hai ngành, mỗi ngành >=12 tín chỉ
+context Student
+inv SumConType12_MinPerMajor1:
+let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester and e.program = self.majorPrimary)
+    ->collect(e | e.offering.module.credits)->sum()
+in self.isDualMajor implies s >= 12
+

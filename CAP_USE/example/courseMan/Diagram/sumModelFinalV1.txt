@@ -1,0 +1,513 @@
+model CourseManV1
+
+-- ======================
+-- ENUMERATIONS
+-- ======================
+enum StudentStatus {ENROLLED, GRADUATED, PROBATION, SUSPENDED}
+enum CourseLevel {BASIC, ADVANCED}
+enum CourseType {CORE, ELECTIVE}
+enum EnrolStatus {PLANNED, ACTIVE, COMPLETED, WITHDRAWN}
+enum EnrolProStatus {ACTIVE, ON_LEAVE, COMPLETED, WITHDRAWN}
+enum AcademicStatus {GOOD, PROBATION}
+enum Grade {A, B, C, D, F, I, W}
+-- ======================
+-- CORE CLASSES
+-- ======================
+class Student
+attributes
+    studentId     : String
+    name          : String
+    email         : String
+    studentStatus        : StudentStatus
+    totalCreditsCompleted : Integer
+    cumulativeGPA         : Real
+    overallStatus         : AcademicStatus
+    balance               : Real
+    aidCap                : Real
+    --test type1.3
+--    currentTerm: AcademicTerm
+    -- Derived
+operations
+end
+
+class CourseModule
+attributes
+    moduleCode    : String
+    title         : String
+    credits       : Integer
+    tuitionFee    : Real
+    level         : CourseLevel
+    type          : CourseType
+    minPassScore: Real
+    --for PreCond
+    -- requiredGade
+    -- requiredPreviousCourses
+    -- prequisites
+   -- corequisites
+   -- excludedModules
+   -- isCapstone
+   -- department
+    
+end
+
+class CourseOffering
+attributes
+  offeringId    : Integer
+ schedule      : String
+  room          : String
+  minStudents   : Integer
+  maxStudents   : Integer
+end
+
+class Program
+attributes
+    programCode   : String
+    programName   : String
+    totalCredits  : Integer
+    minGPA        : Real
+    tuitionCap    : Real
+    maxWithdrawals: Integer
+    minCoreCredits: Integer
+    maxElectiveCredits : Integer
+end
+
+class AcademicTerm
+attributes
+  termId        : String
+  semester      : String
+  year          : Integer
+  startDate     : String
+  endDate       : String
+end
+
+class StudentTermRecord
+attributes
+  termCredits     : Integer
+  tuitionTotal    : Real
+  gpa             : Real
+  withdrawals     : Integer
+  academicStatus  : AcademicStatus
+  scholarshipTotal : Real   -- Học bổng cho từng kỳ (chương trình)
+  --test Type5
+  isExemptMinCredits: Boolean
+end
+
+class Instructor
+attributes
+    instructorId  : String
+    name          : String
+    email         : String
+    availability  : String
+    workloadLimit : Integer
+    
+end
+
+-- ======================
+-- ASSOCIATION CLASS
+-- ======================
+
+associationclass Enrolment
+between
+    Student[1] role student
+    CourseOffering[1] role offering
+attributes
+    enrolId       : Integer
+    enrolStatus   : EnrolStatus
+    grade         : String      
+--    scholarship   : Real  -- Không xét đến học bộc cho từng Course
+    attempt : String
+    withdrawDate: Date
+operations 
+	module() : CourseModule = self.offering.module 
+	term() : AcademicTerm = self.offering.term 
+	gradePoints() : Real = if self.grade = 'A' then 4.0 else if self.grade = 'B' then 3.0 else if self.grade = 'C' then 2.0 else if self.grade = 'D' then 1.0 else 0.0 endif endif endif endif
+	isPassed() : Boolean = (self.grade <> 'F' and self.grade <> 'I' and self.grade <> 'W')
+end
+associationclass ProgramEnrolment
+between
+    Student[1] role student
+    Program[1] role program
+attributes
+    progEnrolId    : Integer
+    admissionTerm  : String      -- ví dụ "Fall-2025"
+    enrolProStatus   : EnrolProStatus
+operations 
+	isActive() : Boolean = self.enrolProStatus = EnrolProStatus::ACTIVE
+end
+
+-- ===============================================
+-- DATA TYPES
+-- ===============================================
+
+dataType Date
+  operations
+    Date(day: Integer, month : Integer, year : Integer)
+    pre: day >= 1 and day <= 31
+    pre: month >= 1 and month <= 12
+end
+
+dataType Time
+  operations
+    Time(hour: Integer, minute: Integer, second: Integer)
+    pre: hour >= 0 and hour < 24
+    pre: minute >= 0 and minute < 60
+    pre: second >= 0 and second < 60
+end
+
+-- ======================
+-- ASSOCIATIONS
+-- ======================
+
+association Offers
+between
+  CourseModule[1] role module
+  CourseOffering[*] role offerings
+end
+
+association Prerequisites
+between
+  CourseModule[*] role modulesPreq
+  CourseModule[*] role prerequisites
+end
+
+association Corequisites
+between
+  CourseModule[*] role modulesCore
+  CourseModule[*] role corequisites
+end
+association CourseProgram
+between
+  CourseModule[*] role modules
+  Program[1] role program
+end
+
+
+association StudentTerm
+between
+  Student[1] role student
+  StudentTermRecord[*] role termRecords
+end
+
+association TermOffering
+between
+  AcademicTerm[1] role term
+  CourseOffering[*] role offerings
+end
+
+association TermRecordTerm
+between
+  StudentTermRecord[*] role termRecords
+  AcademicTerm[1] role term
+end
+association Teaching
+between
+    CourseOffering[*] role offerings
+    Instructor[1] role instructor
+end
+
+-- ======================
+-- CONSTRAINTS
+-- ======================
+constraints
+--============================== SUM CONSTRIANT==============
+------------------
+context Student
+inv SumConType1_1_TotalTuitionEqualsSum:
+  self.termRecords->forAll(str |
+    str.tuitionTotal =
+      self.enrolmentsIn(str.term)
+        ->collect(e | e.offering.module.tuitionFee)
+        ->sum()
+  )
+-------------------
+context Student
+inv Sum1_2_TotalTuition_Equals_Sum:
+  self.termRecords->forAll(str |
+    str.tuitionTotal = self.tuitionInTerm(str.term)
+  )
+  ----------------
+context Student
+inv SumConType1_TotalTuitionEqualsSum:
+  self.termRecords->forAll(str |
+    str.tuitionTotal =
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term)
+        ->collect(e | e.offering.module.tuitionFee)
+        ->sum()
+  )
+
+--==========================================
+-- 1) Học phí kỳ = tổng học phí các enrolments trong kỳ
+context Student
+inv inv1_TotalTuitionEqualsSum:
+  self.termRecords->forAll(str |
+    str.tuitionTotal =
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term)
+        ->collect(e | e.offering.module.tuitionFee)->sum()
+  )
+
+-- 2) Tín chỉ kỳ = tổng tín chỉ các enrolments trong kỳ
+context Student
+inv inv2_TotalCreditsEqualsSum:
+  self.termRecords->forAll(str |
+    str.termCredits =
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term)
+        ->collect(e | e.offering.module.credits)->sum()
+  )
+
+-- 3) Trần học phí theo từng Program ACTIVE trong mỗi kỳ
+context Student
+inv inv3_TuitionWithinLimit:
+  self.termRecords->forAll(str |
+    ProgramEnrolment.allInstances()
+      ->select(pe | pe.student = self and pe.enrolProStatus = EnrolProStatus::ACTIVE)
+      ->forAll(pe |
+        Enrolment.allInstances()
+          ->select(e | e.student = self and e.offering.term = str.term)
+          ->collect(e | e.offering.module.tuitionFee)->sum()
+        <= pe.program.tuitionCap
+      )
+  )
+
+-- 4) Tối đa 30 tín chỉ/kỳ
+context Student
+inv inv4_MaxCreditsPerTerm:
+  self.termRecords->forAll(str |
+    Enrolment.allInstances()
+      ->select(e | e.student = self and e.offering.term = str.term)
+      ->collect(e | e.offering.module.credits)->sum()
+    <= 30
+  )
+
+-- 5) Tối thiểu 15 tín chỉ/kỳ trừ khi được miễn (isExemptMinCredits ở StudentTermRecord)
+context Student
+inv inv5_MinCreditsUnlessExempt:
+  self.termRecords->forAll(str |
+    (not str.isExemptMinCredits) implies
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term)
+        ->collect(e | e.offering.module.credits)->sum()
+      >= 15
+  )
+
+-- 6) Năm học đầu (year nhỏ nhất trong records) phải 12..18 tín chỉ/kỳ
+context Student
+inv inv_Year1_12to18:
+  let minY : Integer = self.termRecords->collect(tr | tr.term.year)->asSet()->min()
+  in
+    self.termRecords->forAll(tr |
+      (tr.term.year = minY) implies (
+        let s : Integer = Enrolment.allInstances()
+          ->select(e | e.student = self and e.offering.term = tr.term)
+          ->collect(e | e.offering.module.credits)->sum()
+        in s >= 12 and s <= 18
+      )
+    )
+
+
+-- 7) Nếu tồn tại kỳ trước có GPA < 2.5 thì kỳ hiện tại ≤ 20 tín chỉ
+-- (Xấp xỉ “kỳ trước” bằng prev.term.year < cur.term.year)
+context Student
+inv inv7_GPAPreviousSemester:
+  self.termRecords->forAll(cur |
+    ( self.termRecords->exists(prev | prev.term.year < cur.term.year and prev.gpa < 2.5) )
+    implies
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = cur.term)
+        ->collect(e | e.offering.module.credits)->sum()
+      <= 20
+  )
+
+-- 8) PROBATION: mỗi kỳ ≤ 2 môn ADVANCED
+context Student
+inv inv8_ProbationAdvancedLimit:
+  self.overallStatus = AcademicStatus::PROBATION implies
+    self.termRecords->forAll(str |
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term
+                        and e.offering.module.level = CourseLevel::ADVANCED)
+        ->size()
+      <= 2
+    )
+
+-- 9) Nếu kỳ trước Withdrawals > 2 thì kỳ hiện tại ≤ 12 tín chỉ
+context Student
+inv inv9_WithdrawalPenalty:
+  self.termRecords->forAll(cur |
+    ( self.termRecords->exists(prev | prev.term.year < cur.term.year and prev.withdrawals > 2) )
+    implies
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = cur.term)
+        ->collect(e | e.offering.module.credits)->sum()
+      <= 12
+  )
+
+-- 10) Khi GRADUATED: tổng CORE đã hoàn tất ≥ minCoreCredits của mọi Program ACTIVE
+-- (Hoàn tất = e.enrolStatus = COMPLETED và grade không thuộc {'F','I','W'}; Enrolment.grade là String)
+context Student
+inv inv10_CoreCreditsRequirement:
+  self.studentStatus = StudentStatus::GRADUATED implies
+    ProgramEnrolment.allInstances()
+      ->select(pe | pe.student = self and pe.enrolProStatus = EnrolProStatus::ACTIVE)
+      ->forAll(pe |
+        let coreCred : Integer =
+          Enrolment.allInstances()
+            ->select(e | e.student = self
+                       and e.enrolStatus = EnrolStatus::COMPLETED
+                       and e.offering.module.type = CourseType::CORE
+                       and e.grade <> 'F' and e.grade <> 'I' and e.grade <> 'W')
+            ->collect(e | e.offering.module.credits)->sum()
+        in coreCred >= pe.program.minCoreCredits
+      )
+
+-- 11) Với mỗi Program ACTIVE, trong từng kỳ tín chỉ thuộc Program đó ≥ 12
+-- (Qua association CourseProgram: e.offering.module.program = pe.program)
+context Student
+inv inv11_MinPerActiveProgramPerTerm:
+  ProgramEnrolment.allInstances()
+    ->select(pe | pe.student = self and pe.enrolProStatus = EnrolProStatus::ACTIVE)
+    ->forAll(pe |
+      self.termRecords->forAll(str |
+        Enrolment.allInstances()
+          ->select(e | e.student = self and e.offering.term = str.term
+                         and e.offering.module.program = pe.program)
+          ->collect(e | e.offering.module.credits)->sum()
+        >= 12
+      )
+    )
+
+
+--================================
+-- PREREQUISTI
+--===============================
+--1. Hoàn thành điều kiện tiên quyết trước khi đăng ký
+context Student
+inv inv1_PrerequisiteSatisfied:
+  Enrolment.allInstances()
+    ->select(e | e.student = self and (e.enrolStatus = EnrolStatus::PLANNED or e.enrolStatus = EnrolStatus::ACTIVE))
+    ->forAll(e |
+      e.offering.module.prerequisites->forAll(p |
+        Enrolment.allInstances()
+          ->exists(e2 |
+            e2.student = self and
+            e2.offering.module = p and
+            e2.enrolStatus = EnrolStatus::COMPLETED and
+            e2.offering.term.year < e.offering.term.year and
+            e2.grade >= 'C'
+          )
+      )
+    )
+--2. Không học song song môn và môn phụ thuộc
+context Student
+inv inv2_NoReversePrerequisite:
+  Enrolment.allInstances()
+    ->select(e | e.student = self)
+    ->forAll(e1, e2 |
+      not e1.offering.module.prerequisites->includes(e2.offering.module)
+    )
+--3. Đủ tín chỉ trước khi học môn tiên quyết nặng
+context Student
+inv inv3_CreditLoadPrerequisite:
+  Enrolment.allInstances()
+    ->select(e | e.student = self)
+    ->forAll(e |
+      e.offering.module.prerequisites->forAll(p |
+        self.totalCreditsCompleted >= 12 --p.requiredCredits
+      )
+    )
+--4. Môn tiên quyết phải hoàn thành trong vòng 4 kỳ
+context Student
+inv inv4_TimeWindowConstraint:
+  Enrolment.allInstances()
+    ->select(e | e.student = self)
+    ->forAll(e |
+      e.offering.module.prerequisites->forAll(p |
+        Enrolment.allInstances()
+          ->exists(e2 |
+            e2.student = self and
+            e2.offering.module = p and
+            (e.offering.term.year - e2.offering.term.year) <= 4
+          )
+      )
+    )
+--5. Môn đồng quyết phải học cùng kỳ
+context Student
+inv inv5_CorequisiteConstraint:
+  Enrolment.allInstances()
+    ->select(e | e.student = self)
+    ->forAll(e |
+      e.offering.module.corequisites->forAll(c |
+        Enrolment.allInstances()
+          ->exists(e2 |
+            e2.student = self and
+            e2.offering.module = c and
+            e2.offering.term.semester = e.offering.term.semester
+          )
+      )
+    )
+--6. Môn chuyên ngành yêu cầu nền tảng ngành trước đó
+context Student
+inv inv6_MajorSpecificPrerequisites:
+  Enrolment.allInstances()
+    ->select(e | e.student = self)
+    ->forAll(e |
+      e.offering.module.level = CourseLevel::ADVANCED implies
+        Enrolment.allInstances()
+          ->exists(e2 |
+            e2.student = self and
+            e2.offering.module.level = CourseLevel::BASIC and
+            e2.offering.module.department = e.offering.module.department and
+            e2.grade >= 'C'
+          )
+    )
+--7. Môn học không thể là tiên quyết của chính nó
+context CourseModule
+inv inv7_NoSelfPrerequisite:
+  not self.prerequisites->includes(self)
+
+--8. Không có vòng lặp trong chuỗi tiên quyết
+context CourseModule
+inv inv8_NoCyclicDependency:
+  self.prerequisites->closure(p | p.prerequisites)->excludes(self)
+--9. Chuỗi tiên quyết không vượt quá 3 cấp
+context CourseModule
+inv inv9_MaxPrerequisiteDepth:
+  self.prerequisites->closure(p | p.prerequisites)->size() <= 3
+
+--10. Yêu cầu điểm ở môn trước
+context Student
+inv inv10_RequiredPreviousGrade:
+  Enrolment.allInstances()
+    ->select(e | e.student = self)
+    ->forAll(e |
+      e.offering.module.minPassScore ->forAll(p | --requiredPreviousCourses
+        Enrolment.allInstances()
+          ->exists(e2 |
+            e2.student = self and
+            e2.offering.module = p and
+            e2.grade >= e.offering.module.requiredGrade
+          )
+      )
+    )
+--11. Không học đồng thời hai môn loại trừ
+context Student
+inv inv11_ExclusionConstraint:
+  Enrolment.allInstances()
+    ->select(e | e.student = self)
+    ->forAll(e1, e2 |
+      not e1.offering.module.excludedModules->includes(e2.offering.module)
+    )
+-- 12. Đồ án tốt nghiệp yêu cầu hoàn thành 80% tổng tín chỉ
+context Student
+inv inv12_CapstonePrerequisite:
+  Enrolment.allInstances()
+    ->select(e | e.student = self)
+    ->forAll(e |
+      e.offering.module.isCapstone implies
+        self.totalCreditsCompleted >= self.program.totalCredits * 0.8
+    )
+
+
+

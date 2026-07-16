@@ -1,0 +1,321 @@
+model CourseManCore
+
+-- ======================
+-- ENUMERATIONS
+-- ======================
+enum StudentStatus {ENROLLED, GRADUATED, PROBATION, SUSPENDED}
+enum CourseLevel {BASIC, ADVANCED}
+enum CourseType {CORE, ELECTIVE}
+enum EnrolStatus {PLANNED, ACTIVE, COMPLETED, WITHDRAWN}
+enum AcademicStatus {GOOD, PROBATION}
+
+-- ======================
+-- CORE CLASSES
+-- ======================
+
+class Student
+attributes
+  -- Thông tin cá nhân
+  studentId     : String
+  name          : String
+  email         : String
+  
+  -- Thông tin học tập hiện tại
+  curSemester   : String
+  year          : Integer
+  status        : StudentStatus
+  
+  -- Thông tin học tập tích lũy (from StudentAcademicRecord)
+  totalCreditsCompleted : Integer
+  cumulativeGPA         : Real
+  overallStatus         : AcademicStatus
+  
+  -- Thông tin tài chính (from StudentAccount)
+  balance         : Real
+  aidCap          : Real
+  feePaid         : Boolean
+  outstandingFees : Real
+  
+  -- Quy tắc đăng ký
+  isExemptMinCredits : Boolean
+  tuitionCap         : Real
+end
+
+class CourseModule
+attributes
+  moduleCode    : String
+  title         : String
+  credits       : Integer
+  tuitionFee    : Real
+  level         : CourseLevel
+  type          : CourseType
+  
+  -- Điều kiện tiên quyết
+  requiredGrade : String
+end
+
+class CourseOffering
+attributes
+  offeringId    : Integer
+  semester      : String
+  year          : Integer
+  capacity      : Integer
+end
+
+class Program
+attributes
+  programCode   : String
+  programName   : String
+  totalCredits  : Integer
+  minGPA        : Real
+  tuitionCap    : Real
+end
+
+class AcademicTerm
+attributes
+  termId        : Integer
+  semester      : String
+  year          : Integer
+  startDate     : String
+  endDate       : String
+end
+
+class StudentTermRecord
+attributes
+  termCredits     : Integer
+  tuitionTotal    : Real
+  gpa             : Real
+  withdrawals     : Integer
+  academicStatus  : AcademicStatus
+end
+
+class SClass
+attributes
+  classId       : Integer
+  schedule      : String
+  room          : String
+  minStudents   : Integer
+  maxStudents   : Integer
+  status        : String
+end
+
+-- ======================
+-- ASSOCIATION CLASS
+-- ======================
+
+associationclass Enrolment
+between
+  Student[1] role student      
+  CourseOffering[*] role offering    
+attributes
+  enrolId       : Integer
+  status        : EnrolStatus       
+  grade         : String
+  scholarship   : Real
+  term          : Integer
+  program       : String
+end
+
+-- ======================
+-- ASSOCIATIONS
+-- ======================
+
+association Offers
+between
+  CourseModule[1] role module
+  CourseOffering[*] role offerings
+end
+
+association Prerequisites
+between
+  CourseModule[*] role modules
+  CourseModule[*] role prerequisites
+end
+
+association StudentProgram
+between
+  Student[*] role students
+  Program[1] role program
+end
+
+association CourseProgram
+between
+  CourseModule[*] role modules
+  Program[1] role program
+end
+
+association ClassOffering
+between
+  SClass[*] role classes
+  CourseOffering[1] role offering
+end
+
+association StudentTerm
+between
+  Student[1] role student
+  StudentTermRecord[*] role termRecords
+end
+
+association TermOffering
+between
+  AcademicTerm[1] role term
+  CourseOffering[*] role offerings
+end
+
+association TermRecordTerm
+between
+  StudentTermRecord[*] role termRecords
+  AcademicTerm[1] role term
+end
+
+-- ======================
+-- CONSTRAINTS
+-- ======================
+
+constraints
+
+-- Sum Constraint: Tổng học phí = tổng học phí các môn đăng ký
+context Student
+inv SumCon_TotalTuitionEqualsSum:
+  self.termRecords
+    ->select(tr | tr.term.semester = self.curSemester)
+    ->forAll(tr | 
+      tr.tuitionTotal = 
+        self.enrolment
+          ->select(e | e.offering.semester = self.curSemester)
+          ->collect(e | e.offering.module.tuitionFee)->sum()
+    )
+
+-- Sum Constraint: Tổng tín chỉ kỳ học
+context Student
+inv SumCon_TermCreditsEqualsSum:
+  self.termRecords
+    ->select(tr | tr.term.semester = self.curSemester)
+    ->forAll(tr | 
+      tr.termCredits = 
+        self.enrolment
+          ->select(e | e.offering.semester = self.curSemester)
+          ->collect(e | e.offering.module.credits)->sum()
+    )
+
+-- Sum Constraint: Học phí không vượt hạn mức
+context Student
+inv SumCon_TuitionWithinLimit:
+  let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.tuitionFee)->sum()
+  in s <= self.tuitionCap
+
+-- Sum Constraint: Tối đa 30 tín chỉ mỗi kỳ
+context Student
+inv SumCon_MaxCreditsPerTerm:
+  let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+  in s <= 30
+
+-- Sum Constraint: Tối thiểu 15 tín chỉ (trừ trường hợp miễn trừ)
+context Student
+inv SumCon_MinCreditsUnlessExempt:
+  let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+  in (not self.isExemptMinCredits) implies s >= 15
+
+-- Sum Constraint: Sinh viên năm 1 đăng ký 12-18 tín chỉ
+context Student
+inv SumCon_Year1_12to18:
+  let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+  in self.year = 1 implies (s >= 12 and s <= 18)
+
+-- Sum Constraint: Tổng học bổng không vượt hạn mức
+context Student
+inv SumCon_FinancialAidTotal:
+  let totalAid = self.enrolment
+    ->collect(e | e.scholarship)->sum()
+  in totalAid <= self.aidCap
+
+-- Prerequisite Constraint: Môn tiên quyết phải hoàn thành trước
+context Student
+inv PreCon_PrerequisiteSatisfied:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::PLANNED or e.status = EnrolStatus::ACTIVE)
+    ->forAll(e |
+      let m : CourseModule = e.offering.module in
+      m.prerequisites->forAll(p |
+        self.enrolment->exists(e2 |
+          e2.offering.module = p and
+          e2.status = EnrolStatus::COMPLETED and
+          e2.term < e.term and
+          e2.grade >= m.requiredGrade
+        )
+      )
+    )
+
+-- Prerequisite Constraint: Không tự tham chiếu
+context CourseModule 
+inv PreCon_NoSelfPrerequisite:
+  not self.prerequisites->includes(self)
+
+-- Prerequisite Constraint: Không có chu trình
+context CourseModule 
+inv PreCon_NoCyclicDependency:
+  not self.prerequisites->closure(p | p.prerequisites)->includes(self)
+
+-- Prerequisite Constraint: Độ sâu tối đa 3 tầng
+context CourseModule 
+inv PreCon_MaxPrerequisiteDepth:
+  self.prerequisites->closure(p | p.prerequisites)->size() <= 3
+
+-- Eligibility Constraint: Sinh viên năm 1 không được học môn nâng cao
+context Student 
+inv EligCon_NoAdvancedForFreshmen:
+  self.year = 1 implies 
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE or e.status = EnrolStatus::PLANNED)
+    ->forAll(e | e.offering.module.level <> CourseLevel::ADVANCED)
+
+-- Size Constraint: Lớp phải đủ sinh viên tối thiểu
+-- Size Constraint: Lớp phải đủ sinh viên tối thiểu
+context SClass
+inv SizeCon_MinStudentsRequired:
+  self.offering.enrolment->size() >= self.minStudents
+
+-- Size Constraint: Lớp không vượt số sinh viên tối đa
+context SClass
+inv SizeCon_MaxEnrollment:
+  self.offering.enrolment->size() <= self.maxStudents
+
+-- Size Constraint: Kiểm tra đồng thời cả min và max
+context SClass
+inv SizeCon_MinMaxStudents:
+  let enrollmentCount = self.offering.enrolment->size() in
+  enrollmentCount >= self.minStudents and enrollmentCount <= self.maxStudents
+
+
+-- Structural Constraint: Một sinh viên không đăng ký trùng môn trong cùng kỳ
+context Student 
+inv StrucCon_UniqueEnrolmentPerModule:
+  self.enrolment->forAll(e1, e2 |
+    e1 <> e2 and e1.offering.semester = e2.offering.semester
+    implies e1.offering.module <> e2.offering.module
+  )
+
+-- Status Constraint: Điều kiện tốt nghiệp
+context Student
+inv StatusCon_GraduationEligibility:
+  self.status = StudentStatus::GRADUATED implies
+  (self.totalCreditsCompleted >= self.program.totalCredits and
+   self.cumulativeGPA >= self.program.minGPA and
+   self.outstandingFees = 0)
+
+-- Status Constraint: Sinh viên probation không đăng ký môn elective
+context Student
+inv StatusCon_ProbationEnrollmentLimit:
+  self.status = StudentStatus::PROBATION implies
+  self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->forAll(e | e.offering.module.type <> CourseType::ELECTIVE)
+

@@ -1,0 +1,46 @@
+model TemplateSumConCourseMan
+class __ClassA__                
+attributes
+  __matchAttr__ : __matchType__    
+  __valueAttr__ : __valueType__ 
+  __valueTotal__ : __valueType__
+  __exampteAttr__ : __logicType__ 
+  __statusAttr__ : __constantStutus__     
+end
+
+class __ClassB__                  
+attributes
+  __filterAttr__ : __matchType__    
+end
+
+class __ClassC__                  
+attributes
+  __sumAttr__ : __valueType__   
+  __typeAttr__ : __typeType__       
+end
+
+associationclass __ClassD__   
+between
+  __ClassA__[1] role __role1__    
+  __ClassB__[*] role __role__    
+ attributes
+  __statusAttr__ : __constantStutus__
+
+end
+
+association __Link__
+between
+  __ClassC__[1] role __role2__     
+  __ClassB__[*] role __roles1__              
+
+end
+association __LinhPrerequisites__
+between
+    __ClassC__[*] role __PreOf__
+    __ClassC__[*] role __pre__
+end
+enum __valueType__{Integer, Real}
+enum __matchType__{Integer, Real, String}
+enum __constantStutus__{PROBATION, GOOD, GRADUATED}
+enum __logicType__{True, False}
+enum __typeType__{CORE}

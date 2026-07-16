@@ -1,0 +1,72 @@
+context ContextClass
+inv ConstraintName:
+  self.status = StudentStatus::ENROLLED implies
+let v : Integer =
+      self.enrolments
+          ->select(e | e.offering.semester = self.currentSemester)
+          ->collect(e | e.course.credits)
+          ->sum()
+  in
+      v <= self.maxCredits
+
+context ContextClass
+inv ConstraintName:
+  let v : Integer =
+      self.studyRecords
+          ->select(e | e.semester = self.currentSemester)
+          ->collect(e | e.self.studyHours)
+          ->sum()
+  in
+      v >= 120
+
+context ContextClass
+inv ConstraintName:
+  let s : Integer =
+      self.studyRecords
+          ->select(e | e.semester = self.currentSemester)
+          ->collect(e | e.self.studyHours)
+          ->sum()
+  in
+      s = self.totalStudyHours
+
+context ContextClass
+inv ConstraintName:
+  let s : Integer =
+      self.enrolments
+          ->select(e | e.offering.semester = self.currentSemester)
+          ->collect(e | e.course.credits)
+          ->sum()
+  in
+      s = self.coreCredits
+
+context ContextClass
+inv ConstraintName:
+  let s : Integer =
+    self.Enrolment
+      ->select(e | e.status = self.status and e.year = self.year)
+      ->collect(e | e.offering.credits)
+      ->sum()
+  in
+    v < 30
+
+
+context ContextClass
+inv ConstraintName:
+  self.programType = 'HONOURS' implies
+let s : Integer =
+    self.Enrolment
+      ->select(e | e.status = self.status and e.semester = self.semester)
+      ->collect(e | e.offering.credits)
+      ->sum()
+  in
+    v >= 15
+
+
+context ContextClass
+inv ConstraintName:
+  self.year = 1 implies
+  self.Enrolment->forAll(e |
+    e.course.level < 300 and self.approvedByFaculty
+  )
+
+

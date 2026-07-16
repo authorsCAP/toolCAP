@@ -1,0 +1,145 @@
+model processMan
+
+class Process
+attributes
+  code : String
+  name : String
+  kind : String 
+  totalPlannedHours : Integer 
+  active : Boolean
+end    
+
+class Task
+attributes
+  orderNo : Integer
+  name : String
+  plannedHours : Integer
+  weight : Integer 
+  deadline : String         
+end
+
+class SubjectBySemester
+attributes
+  code : String
+  name : String
+  semester : Integer
+  year : Integer
+  isLab : Boolean
+  minHours : Integer
+  maxHours : Integer
+  status : String
+end
+
+-- Association class 
+associationclass ProcessApplication
+between
+  Process[1]           role process
+  SubjectBySemester[*] role sbs
+attributes
+  id : Integer
+  appliedOn : String       -- đổi từ String → DateTime
+  state : String 
+  totalAssignedHours : Integer 
+  currentTime : String     -- đổi từ String → DateTime (thay cho now())
+end
+
+-- Association class
+associationclass TaskForSubject
+between
+  Task[1..*]            role task
+  SubjectBySemester[1]  role sbs
+attributes
+  id : Integer
+  actionCount : Integer
+  actionTotalMin : Integer 
+  assessmentWeight : Integer 
+  assignedHours : Integer 
+  openActionCount : Integer
+  kind : String 
+end
+
+-- Process.tasks : Set(Task)
+association ProcessTasks
+between
+  Process[1] role process
+  Task[*]   role task
+end
+
+
+constraints --Constraints
+-- Type1: Equality / Reconciliation (Summation match)
+context Process
+inv TotalPlannedEqualsTasks:
+  self.totalPlannedHours =
+    self.task->collect(plannedHours)->sum()
+
+-- Type2: Bounds (Min / Max / Range)
+context SubjectBySemester
+inv TotalHoursWithinBounds:
+  let total : Integer =
+    TaskForSubject.allInstances()
+      ->select(t | t.sbs = self)
+      ->collect(assignedHours)->sum()
+  in total >= self.minHours and total <= self.maxHours
+
+-- Type2:
+context ProcessApplication
+inv NotExceedProcessCapacity:
+  self.totalAssignedHours <= self.process.totalPlannedHours
+  
+-- Type2:
+context SubjectBySemester
+inv AssessmentWeightsBounded:
+  let wtotal : Integer =
+    TaskForSubject.allInstances()
+      ->select(t | t.sbs = self)
+      ->collect(assessmentWeight)->sum()
+  in wtotal >= 0 and wtotal <= 100
+
+-- Type3: Conditional / State-based enforcement
+context Process
+inv ActiveEnforcesEquality:
+  let total : Integer =
+    ProcessApplication.allInstances()
+      ->select(pa | pa.process = self)
+      ->collect(totalAssignedHours)->sum()
+  in if self.active then total = self.totalPlannedHours
+     else total <= self.totalPlannedHours
+     endif
+
+-- Type3: 
+context SubjectBySemester
+inv FinalisedWeightIs100:
+  if self.status = 'Finalised' then
+    TaskForSubject.allInstances()
+      ->select(t | t.sbs = self)
+      ->collect(assessmentWeight)->sum() = 100
+  else true endif
+
+-- Type4: Group-wise / Relative constraints
+context SubjectBySemester
+inv NoKindAbove70Percent:
+  let total : Integer =
+    TaskForSubject.allInstances()
+      ->select(t | t.sbs = self)
+      ->collect(assignedHours)->sum()
+  in
+  let kinds : Set(String) =
+    TaskForSubject.allInstances()
+      ->select(t | t.sbs = self)
+      ->collect(kind)->asSet()
+  in kinds->forAll(k |
+       let groupTotal : Integer =
+         TaskForSubject.allInstances()
+           ->select(t | t.sbs = self and t.kind = k)
+           ->collect(assignedHours)->sum()
+       in 10 * groupTotal <= 7 * total
+     )
+
+ --Type4:
+ context Process
+inv NoTaskDominates:
+  self.task->forAll(t | 2 * t.plannedHours <= self.totalPlannedHours)
+
+
+

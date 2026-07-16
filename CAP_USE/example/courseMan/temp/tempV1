@@ -1,0 +1,99 @@
+==========================Program
+-- 3) Trần học phí theo từng Program ACTIVE trong mỗi kỳ =====TODO Program
+context Student
+inv inv3_TuitionWithinLimit:
+  self.termRecord->forAll(str |
+    ProgramEnrolment.allInstances()
+      ->select(pe | pe.student = self and pe.enrolProStatus = EnrolProStatus::ACTIVE)
+      ->forAll(pe |
+        Enrolment.allInstances()
+          ->select(e | e.student = self and e.offering.term = str.term)
+          ->collect(e | e.offering.module.tuitionFee)->sum()
+        <= pe.program.tuitionCap
+      )
+  )
+  =========================================== Term
+  -- 4) Tối đa 30 tín chỉ/kỳ  --- Lấy thuộc tính : MaxCreditsPerTerm
+context Student
+inv inv4_MaxCreditsPerTerm:
+  self.termRecord->forAll(str |
+    Enrolment.allInstances()
+      ->select(e | e.student = self and e.offering.term = str.term)
+      ->collect(e | e.offering.module.credits)->sum()
+    <= 30
+  )
+  
+  -- 11) Với mỗi Program ACTIVE, trong từng kỳ tín chỉ thuộc Program đó ≥ 12
+-- (Qua association CourseProgram: e.offering.module.program = pe.program)
+context Student
+inv inv11_MinPerActiveProgramPerTerm:
+  ProgramEnrolment.allInstances()
+    ->select(pe | pe.student = self and pe.enrolProStatus = EnrolProStatus::ACTIVE)
+    ->forAll(pe |
+      self.termRecord->forAll(str |
+        Enrolment.allInstances()
+          ->select(e | e.student = self and e.offering.term = str.term
+                         and e.offering.module.program = pe.program)
+          ->collect(e | e.offering.module.credits)->sum()
+        >= 12
+      )
+    )
+-- 5) Tối thiểu 15 tín chỉ/kỳ trừ khi được miễn (isExemptMinCredits ở StudentTermRecord)
+context Student
+inv inv5_MinCreditsUnlessExempt:
+  self.termRecord->forAll(str |
+    (not str.isExemptMinCredits) implies
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term)
+        ->collect(e | e.offering.module.credits)->sum()
+      >= 15
+  )
+  -- 6) Năm học đầu (year nhỏ nhất trong records) phải 12..18 tín chỉ/kỳ
+context Student
+inv inv_Year1_12to18:
+  let minY : Integer = self.termRecord->collect(tr | tr.term.year)->asSet()->min()
+  in
+    self.termRecord->forAll(tr |
+      (tr.term.year = minY) implies (
+        let s : Integer = Enrolment.allInstances()
+          ->select(e | e.student = self and e.offering.term = tr.term)
+          ->collect(e | e.offering.module.credits)->sum()
+        in s >= 12 and s <= 18
+      )
+    )
+-- 7) Nếu tồn tại kỳ trước có GPA < 2.5 thì kỳ hiện tại ≤ 20 tín chỉ
+-- (Xấp xỉ “kỳ trước” bằng prev.term.year < cur.term.year)
+context Student
+inv inv7_GPAPreviousSemester:
+  self.termRecord->forAll(cur |
+    ( self.termRecord->exists(prev | prev.term.year < cur.term.year and prev.gpa < 2.5) )
+    implies
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = cur.term)
+        ->collect(e | e.offering.module.credits)->sum()
+      <= 20
+  )
+  
+
+-- 8) PROBATION: mỗi kỳ ≤ 2 môn ADVANCED
+context Student
+inv inv8_ProbationAdvancedLimit:
+  self.overallStatus = AcademicStatus::PROBATION implies
+    self.termRecord->forAll(str |
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = str.term
+                        and e.offering.module.level = CourseLevel::ADVANCED)
+        ->size()
+      <= 2
+    )
+-- 9) Nếu kỳ trước Withdrawals > 2 thì kỳ hiện tại ≤ 12 tín chỉ
+context Student
+inv inv9_WithdrawalPenalty:
+  self.termRecord->forAll(cur |
+    ( self.termRecord->exists(prev | prev.term.year < cur.term.year and prev.withdrawals > 2) )
+    implies
+      Enrolment.allInstances()
+        ->select(e | e.student = self and e.offering.term = cur.term)
+        ->collect(e | e.offering.module.credits)->sum()
+      <= 12
+  )

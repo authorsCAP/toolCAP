@@ -1,0 +1,272 @@
+
+
+  
+--================================
+-- PREREQUISTI
+--===============================
+--1. Hoàn thành điều kiện tiên quyết trước khi đăng ký
+context Student
+inv inv1_PrerequisiteSatisfied:
+  Enrolment.allInstances()
+    ->select(e | e.student = self and (e.status = EnrolStatus::PLANNED or e.status = EnrolStatus::ACTIVE))
+    ->forAll(e |
+      let m : CourseModule = e.offering.module in
+      m.prerequisites->forAll(p |
+        Enrolment.allInstances()->exists(e2 |
+          e2.student = self and
+          e2.offering.module = p and
+          e2.status = EnrolStatus::COMPLETED and
+          e2.term().endDate < e.term().startDate and
+          (e2.grade = 'A' or e2.grade = 'B' or e2.grade = 'C')
+        )
+      )
+    )
+
+--2. Không học song song môn và môn phụ thuộc
+context Student
+inv inv2_NoReversePrerequisite_SameTerm:
+  Enrolment.allInstances()
+    ->select(e | e.student = self)
+    ->forAll(e1, e2 |
+      e1 <> e2 implies
+        not ( e2.offering.module.prerequisites->includes(e1.offering.module)
+              and e1.offering.term = e2.offering.term )
+    )
+
+--3. Đủ tín chỉ trước khi học môn tiên quyết weight
+context Student
+inv inv3_CreditLoadPrerequisite_Global30:
+  Enrolment.allInstances()
+    ->select(e | e.student = self and (e.status = EnrolStatus::PLANNED or e.status = EnrolStatus::ACTIVE))
+    ->forAll(e |
+      let earned : Integer =
+        Enrolment.allInstances()
+          ->select(x | x.student = self and x.status = EnrolStatus::COMPLETED and
+                         x.grade <> 'F' and x.grade <> 'I' and x.grade <> 'W')
+          ->collect(x | x.offering.module.credits)->sum()
+      in earned >= 30
+    )
+
+--4. Môn tiên quyết phải hoàn thành trong vòng 4 kỳ (2 năm)
+context Student
+inv inv4_TimeWindowConstraint_ApproxByYear:
+  Enrolment.allInstances()
+    ->select(e | e.student = self and (e.status = EnrolStatus::PLANNED or e.status = EnrolStatus::ACTIVE))
+    ->forAll(e |
+      e.offering.module.prerequisites->forAll(p |
+        Enrolment.allInstances()->exists(e2 |
+          e2.student = self and
+          e2.offering.module = p and
+          e2.status = EnrolStatus::COMPLETED and
+          e2.term().year <= e.term().year and
+          e.term().year - e2.term().year <= 2
+        )
+      )
+    )
+
+--5. Môn đồng quyết phải học cùng kỳ
+context Student
+inv inv5_CorequisiteConstraint:
+  Enrolment.allInstances()
+    ->select(e | e.student = self and (e.status = EnrolStatus::PLANNED or e.status = EnrolStatus::ACTIVE))
+    ->forAll(e |
+      e.offering.module.corequisites->forAll(c |
+        Enrolment.allInstances()->exists(e2 |
+          e2.student = self and
+          e2.offering.module = c and
+          e2.offering.term = e.offering.term
+        )
+      )
+    )
+
+--6. Môn chuyên ngành yêu cầu nền tảng ngành trước đó
+context Student
+inv inv6_MajorSpecificPrerequisites:
+  Enrolment.allInstances()
+    ->select(e | e.student = self and (e.status = EnrolStatus::PLANNED or e.status = EnrolStatus::ACTIVE))
+    ->forAll(e |
+      (e.offering.module.level = CourseLevel::ADVANCED) implies
+        Enrolment.allInstances()->exists(e2 |
+          e2.student = self and
+          e2.status = EnrolStatus::COMPLETED and
+          e2.grade <> 'F' and e2.grade <> 'I' and e2.grade <> 'W' and
+          e2.offering.module.type = CourseType::CORE and
+          e.offering.module.program = e2.offering.module.program
+        )
+    )
+
+--7.  Không tự tham chiếu prerequisite
+context CourseModule
+inv inv7_NoSelfPrerequisite:
+  not self.prerequisites->includes(self)
+
+
+--8. Không có vòng lặp trong chuỗi tiên quyết
+context CourseModule
+inv inv8_NoCyclicDependency:
+  not self.prerequisites->closure(p | p.prerequisites)->includes(self)
+
+--9. Chuỗi tiên quyết không vượt quá 3 cấp
+context CourseModule
+inv inv9_MaxPrerequisiteDepth:
+  self.prerequisites->closure(p | p.prerequisites)->size() <= 3
+
+
+--10. Yêu cầu điểm ở môn trước
+context Student
+inv inv10_RequiredPreviousGrade_DefaultC:
+  Enrolment.allInstances()
+    ->select(e | e.student = self and (e.status = EnrolStatus::PLANNED or e.status = EnrolStatus::ACTIVE))
+    ->forAll(e |
+      e.offering.module.prerequisites->forAll(p |
+        Enrolment.allInstances()->exists(e2 |
+          e2.student = self and
+          e2.offering.module = p and
+          e2.status = EnrolStatus::COMPLETED and
+          (e2.grade = 'A' or e2.grade = 'B' or e2.grade = 'C')
+        )
+      )
+    )
+
+--11. Không học đồng thời hai môn loại trừ
+context Student
+inv inv11_ExclusionConstraint:
+  Enrolment.allInstances()
+    ->select(e | e.student = self)
+    ->forAll(e1, e2 |
+      e1 <> e2 implies
+        not ( e1.offering.term = e2.offering.term and
+              e1.offering.module.exclusions->includes(e2.offering.module) )
+    )
+
+
+-- 12. Đồ án tốt nghiệp yêu cầu hoàn thành 80% tổng tín chỉ
+context Student
+inv inv12_CapstonePrerequisite_80Percent:
+  let earned : Integer = Enrolment.allInstances()
+    ->select(x | x.student = self and x.status = EnrolStatus::COMPLETED and
+               x.grade <> 'F' and x.grade <> 'I' and x.grade <> 'W')
+    ->collect(x | x.offering.module.credits)->sum()
+  in
+    Enrolment.allInstances()
+      ->select(e | e.student = self)
+      ->forAll(eCap |
+        (eCap.offering.module.isCapstone = true) implies
+          ProgramEnrolment.allInstances()
+            ->select(pe | pe.student = self and pe.status = EnrolProStatus::ACTIVE)
+            ->forAll(pe | earned >= pe.program.totalCredits * 0.8)
+      )
+
+--==================================SCHEDULE
+
+
+
+
+
+
+
+1. This constraint ensures that an entity may only proceed to a new unit of activity if all prerequisite conditions have been successfully met. It enforces dependency fulfillment before progression, thereby guaranteeing adequate preparation and logical sequencing in complex systems.
+Students may only register for a course if they have completed all prerequisite courses with a minimum grade.
+Một môn học có thể yêu cầu nhiều điều kiện tiên quyết cùng lúc, ví dụ: Sinh viên chỉ có thể đăng ký Môn A nếu đã hoàn thành cả Môn B và Môn C với điểm tối thiểu là C
+
+context Student
+inv inv1_PrerequisiteSatisfied:
+self.enrolment
+->select(e | e.enrolStatus = 'PLANNED' or e.enrolStatus = 'ACTIVE')
+->forAll(e |
+let m : CourseModule = e.offering.module in
+-- Mỗi môn có thể yêu cầu nhiều môn tiên quyết
+m.prerequisites->forAll(p |
+-- Kiểm tra rằng mọi môn tiên quyết đã được hoàn thành
+self.enrolment->exists(e2 |
+e2.offering.module = p and
+e2.enrolStatus = 'COMPLETED' and
+e2.term < e.term and -- hoàn thành trước khi đăng ký
+(e2.grade > = 'C') -- đạt tối thiểu C
+)
+)
+)
+
+2. This constraint prohibits simultaneous participation in both a unit and another unit that directly depends on it.
+Students are not allowed to simultaneously register for a course and another course that depends on it in the same semester.
+Sinh viên không thể đăng ký môn đang là điều kiện tiên quyết cho một môn khác mà họ đã đăng ký trước đó trong cùng học kỳ (Môn điều kiện tiên quyết phải được đăng ký và học đạt điểm tối thiểu rồi).
+
+context Student inv inv2_NoReversePrerequisite:
+self.enrolments->forAll(e1, e2 | e1.course.prerequisites->excludes(e2.course))
+
+3. This constraint requires that a minimum accumulated workload or capacity threshold be achieved before engaging in certain advanced or resource-intensive units.
+To register for a heavy prerequisite course, students must have completed a minimum number of credits beforehand.
+Để đăng ký một môn học, sinh viên phải đã tích lũy đủ số tín chỉ yêu cầu của các môn tiên quyết. Ví dụ: để học "Lập trình nâng cao", sinh viên cần hoàn thành ít nhất 30 tín chỉ các môn cơ bản.
+
+context Student inv inv3_CreditLoadPrerequisite:
+self.enrolments->forAll(e | e.course.prerequisites->forAll(p |
+self.totalCreditsCompleted >= p.requiredCredits))
+
+4. This constraint requires that prerequisites must be completed within a predefined temporal interval for subsequent engagement to be valid
+A prerequisite course must be completed within a certain period of time.
+Môn tiên quyết phải được hoàn thành trong vòng 4 kỳ học trước khi đăng ký môn chính. Điều này đảm bảo kiến thức tiên quyết vẫn còn "mới" và không quá lỗi thời.
+
+context Student inv inv4_TimeWindowConstraint:
+self.enrolments->forAll(e | e.course.prerequisites->forAll(p |
+self.enrolments->exists(e2 | e2.course = p and (e.offering.semester - e2.semester) <= 4)))
+
+5. This constraint mandates that certain units must be undertaken concurrently
+Some courses are required to be taken concurrently
+Các môn đồng quyết phải được học cùng một kỳ học. Ví dụ: "Lý thuyết mạch điện" và "Thí nghiệm mạch điện" phải học cùng kỳ để sinh viên vừa học lý thuyết vừa thực hành.
+
+context Student inv inv5_CorequisiteConstraint:
+self.enrolments->forAll(e | e.course.corequisites->forAll(c |
+self.enrolments->exists(e2 | e2.course = c and e2.semester = e.offering.semester)))
+
+6. Major-specific prerequisite requirements
+Để học môn chuyên sâu, sinh viên phải đã hoàn thành ít nhất một môn cơ sở cùng chuyên ngành với điểm C trở lên. Ví dụ: để học "Trí tuệ nhân tạo nâng cao", cần đã qua môn "Cơ sở trí tuệ nhân tạo" với điểm tối thiểu C.
+
+context Student
+inv inv6_MajorSpecificPrerequisites:
+self.enrolments->forAll(e | e.course.type = 'ADVANCED' implies
+self.enrolments->exists(e2 | e2.course.type = 'CORE' and
+e2.course.department = e.course.department and e2.grade >= 'C'))
+
+7. This constraint prohibits a unit from being defined as a prerequisite of itself.
+A subject cannot be defined as a prerequisite of itself.
+Môn học không thể là điều kiện tiên quyết của chính nó
+
+context course inv inv7_NoSelfPrerequisite:
+not self.prerequisites->includes(self)
+This constraint prevents the formation of dependency loops in which a unit directly or indirectly depends on itself through a chain of prerequisites.
+8. Loops are not allowed in the prerequisite chain
+Môn học không thể phụ thuộc vào môn phụ thuộc vào nó (tránh chu trình)
+
+context course inv inv8_NoCyclicDependency:
+self.prerequisites->closure(p | p.prerequisites)->excludes(self)
+
+9. This constraint limits the maximum length of dependency chains among units.
+The prerequisite sequence of a course must not exceed the allowed depth.
+Độ sâu của chuỗi môn tiên quyết không được vượt quá 3 bậc. Ví dụ: Môn A yêu cầu môn B, môn B yêu cầu môn C, môn C yêu cầu môn D thì đây là chuỗi 3 bậc. Điều này tránh việc tạo ra chuỗi tiên quyết quá phức tạp và dài.
+
+context course inv inv9_MaxPrerequisiteDepth:
+self.prerequisites->closure(p | p.prerequisites)->size() <= 3
+
+10. This constraint requires that prerequisites are completed with a minimum performance level before accessing subsequent units.
+Some courses require students to achieve a minimum entrance grade in the previous course
+Một số môn yêu cầu điểm đầu vào từ kỳ trước để được đăng ký (VD: điểm lập trình cơ bản ≥ B mới có thể học lập trình nâng cao).
+
+context Student inv inv11_ExclusionConstraint:
+self.enrolments->forAll(e1, e2|not (e1.course.excludedModules->includes(e2.course)))
+
+11.This constraint specifies that certain units cannot coexist simultaneously due to conflict, redundancy, or mutual exclusivity
+Some courses cannot be taken concurrently due to overlapping or conflicting content.
+Sinh viên không được đăng ký đồng thời hai môn học loại trừ lẫn nhau. Ví dụ: nếu "Toán cao cấp A" và "Toán cao cấp B" là hai môn thay thế nhau, sinh viên chỉ được chọn một trong hai, không được học cả hai.
+
+context Student inv inv10_RequiredPreviousGrade:
+self.enrolments->forAll(e | e.course.requiredPreviousCourse->forAll(p |
+self.enrolments->exists(e2 | e2.course = p and e2.grade >= e.course.requiredGrade)))
+
+12. Capstone course prerequisite (must complete 80% credits first)
+Để đăng ký đồ án tốt nghiệp, sinh viên phải hoàn thành ít nhất 80% tổng số tín chỉ của chương trình. Điều này đảm bảo sinh viên đã có đủ kiến thức để thực hiện đồ án.
+
+context Student
+inv inv12_CapstonePrerequisite:
+self.enrolments->forAll(e | e.course.isCapstone implies
+self.completedCredits >= self.program.totalCredits * 0.8)
+

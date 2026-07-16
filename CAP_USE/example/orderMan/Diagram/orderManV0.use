@@ -1,0 +1,694 @@
+model OrderMan
+
+-- ===============================================
+-- CORE CLASSES
+-- ===============================================
+
+class Customer
+attributes
+    id : Integer
+    name : String
+    email : String
+    
+    -- Financial Management
+    creditLimit : Real
+    dailyLimit : Real
+    totalPurchases : Real
+    loyaltyPoints : Real
+    
+    -- Status Management
+    status : String                    -- 'ACTIVE', 'SUSPENDED', 'BLACKLISTED'
+    isPremium : Boolean
+    verified : Boolean
+    blacklisted : Boolean
+    suspended : Boolean
+    
+    -- Account Information
+    registrationDate : String
+    membershipDuration : Integer
+    accountAge : Integer
+    activated : Boolean
+    activationDate : String
+    
+    -- Performance Metrics
+    creditScore : Integer
+    annualVolume : Real
+    lifetimeValue : Real
+    
+    -- Compliance
+    dataProcessingConsent : Boolean
+    dataRetentionPeriod : Integer
+end
+
+class Order
+attributes
+    id : Integer
+    orderNumber : String
+    orderDate : String
+    
+    -- Financial Calculations
+    subtotal : Real
+    taxAmount : Real
+    shippingCost : Real
+    discountAmount : Real
+    finalAmount : Real
+    
+    -- Order Management
+    status : String                    -- 'PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'
+    priority : String                  -- 'NORMAL', 'RUSH', 'EXPRESS'
+    
+    -- Processing Information
+    processedDate : String
+    
+    -- Authorization
+    managerApproval : Boolean
+    creditApproval : Boolean
+    bulkDiscountApplied : Boolean
+    
+    -- Cancellation
+    cancellationReason : String
+    refundProcessed : Boolean
+    
+    -- Payment Management
+    paymentAttempts : Integer
+    retryInterval : Integer
+end
+
+class Product
+attributes
+    id : Integer
+    name : String
+    sku : String
+    
+    -- Pricing Information
+    unitPrice : Real
+    unitCost : Real
+    
+    -- Physical Properties
+    weight : Real
+    
+    -- Inventory Management
+    stockQuantity : Integer
+    reorderPoint : Integer
+    
+    -- Product Status
+    status : String                    -- 'ACTIVE', 'DISCONTINUED', 'OUT_OF_STOCK'
+    availableForSale : Boolean
+    returnable : Boolean
+    exportAllowed : Boolean
+    
+    -- Seasonal Properties
+    seasonal : Boolean
+    seasonStartDate : String
+    seasonEndDate : String
+    
+    -- Restock Management
+    restockAttempts : Integer
+    restockFailed : Boolean
+end
+
+class Payment
+attributes
+    id : Integer
+    amount : Real
+    
+    -- Payment Processing
+    status : String                    -- 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED'
+    processedDate : String
+    transactionId : String
+    
+    -- Payment Method
+    paymentMethodType : String         -- 'CREDIT_CARD', 'DEBIT', 'CREDIT'
+    validated : Boolean
+    
+    -- Security & Compliance
+    encryptedData : Boolean
+    tokenized : Boolean
+    
+    -- Failure Management
+    failureReason : String
+end
+
+class Shipment
+attributes
+    id : Integer
+    trackingNumber : String
+    
+    -- Delivery Information
+    estimatedDelivery : String
+    actualDeliveryDate : String
+    delivered : Boolean
+    
+    -- Shipping Details
+    shippingMethod : String            -- 'STANDARD', 'EXPRESS', 'OVERNIGHT'
+    expedited : Boolean
+    
+    -- Delivery Management
+    deliveryAttempts : Integer
+    deliveryFailed : Boolean
+    holdAtFacility : Boolean
+    signature : String
+    
+    -- Status Tracking
+    status : String                    -- 'PENDING', 'IN_TRANSIT', 'DELIVERED'
+end
+
+class Supplier
+attributes
+    id : Integer
+    name : String
+    
+    -- Status
+    status : String                    -- 'ACTIVE', 'BLACKLISTED', 'PREFERRED'
+    contractValid : Boolean
+    performanceRating : Real
+    
+    -- Delivery Timing
+    minLeadTime : Integer
+    maxLeadTime : Integer
+end
+
+-- ===============================================
+-- ASSOCIATION CLASSES
+-- ===============================================
+
+associationclass OrderItem
+between
+    Order[1] role order
+    Product[*] role product
+attributes
+    id : Integer
+    quantity : Integer
+    unitPrice : Real
+    status : String                    -- 'PENDING', 'FULFILLED', 'CANCELLED'
+    requiresShipping : Boolean
+end
+
+-- ===============================================
+-- ASSOCIATIONS (Tối thiểu)
+-- ===============================================
+
+association CustomerOrders
+between
+    Customer[1] role customer
+    Order[*] role orders
+end
+
+association OrderPayment
+between
+    Order[1] role order
+    Payment[0..1] role payment
+end
+
+association OrderShipment
+between
+    Order[1] role order
+    Shipment[0..1] role shipment
+end
+
+association ProductSupplier
+between
+    Product[*] role products
+    Supplier[1] role supplier
+end
+
+-- ===============================================
+-- CONSTRAINTS
+-- ===============================================
+
+constraints
+
+-- ===============================================
+-- 1. SUM CONSTRAINTS (10 constraints)
+-- ===============================================
+
+-- T1: Order total equals sum of item subtotals
+context Order
+inv T1_OrderTotalEqualsSum:
+  let itemsTotal = self.orderItem->collect(oi | oi.quantity * oi.unitPrice)->sum() in
+  itemsTotal = self.subtotal
+
+-- T2: Final amount calculation
+context Order  
+inv T2_FinalAmountCalculation:
+  self.finalAmount = self.subtotal + self.taxAmount + self.shippingCost - self.discountAmount
+
+-- T3: Customer spending limit
+context Customer
+inv T3_SpendingLimit:
+  let totalSpending = self.orders->select(o | o.status = 'COMPLETED')
+    ->collect(o | o.finalAmount)->sum() in
+  totalSpending <= self.creditLimit
+
+-- T4: Daily order cap per customer
+context Customer
+inv T4_DailyOrderCap:
+  let todayOrders = self.orders->select(o | o.orderDate = '2025-10-21')
+    ->collect(o | o.finalAmount)->sum() in
+  todayOrders <= self.dailyLimit
+
+-- T5: Minimum order amount
+context Order
+inv T5_MinimumOrderAmount:
+  self.subtotal >= 50.0 or self.customer.isPremium
+
+-- T6: Bulk discount threshold
+context Order
+inv T6_BulkDiscountThreshold:
+  let totalQuantity = self.orderItem->collect(oi | oi.quantity)->sum() in
+  totalQuantity >= 100 implies self.bulkDiscountApplied
+
+-- T7: Loyalty points accumulation
+context Customer
+inv T7_LoyaltyPointsAccumulation:
+  let earnedPoints = self.orders->select(o | o.status = 'COMPLETED')
+    ->collect(o | o.finalAmount * 0.01)->sum() in
+  earnedPoints <= self.loyaltyPoints + 100
+
+-- T8: Product inventory value
+context Product
+inv T8_InventoryValue:
+  self.stockQuantity >= 0
+
+-- T9: Return cost limit
+context Order
+inv T9_ReturnCostLimit:
+  self.finalAmount >= 0
+
+-- T10: Customer lifetime value
+context Customer
+inv T10_LifetimeValuePositive:
+  self.lifetimeValue >= 0
+
+-- ===============================================
+-- 2. PREREQUISITE CONSTRAINTS (8 constraints)
+-- ===============================================
+
+-- Payment prerequisite for shipping
+context Order
+inv PaymentPrerequisite:
+  self.shipment <> null implies 
+  (self.payment <> null and self.payment.status = 'COMPLETED')
+
+-- Customer verification prerequisite
+context Order
+inv CustomerVerificationPrerequisite:
+  self.status <> 'PENDING' implies self.customer.verified = true
+
+-- Product availability prerequisite
+context OrderItem
+inv ProductAvailabilityPrerequisite:
+  self.product.status = 'ACTIVE' and self.product.availableForSale = true
+
+-- Credit approval prerequisite
+context Order
+inv CreditApprovalPrerequisite:
+  self.finalAmount > self.customer.creditLimit implies self.creditApproval = true
+
+-- Bulk order approval prerequisite
+context Order
+inv BulkOrderPrerequisite:
+  self.orderItem->collect(oi | oi.quantity)->sum() > 1000 implies self.managerApproval = true
+
+-- Supplier contract prerequisite
+context Product
+inv SupplierContractPrerequisite:
+  self.supplier.status = 'ACTIVE' and self.supplier.contractValid = true
+
+-- Payment method validation
+context Payment
+inv PaymentMethodValidation:
+  self.validated = true
+
+-- Delivery prerequisites
+context Shipment
+inv DeliveryPrerequisite:
+  self.expedited = true implies self.order.customer.isPremium = true
+
+-- ===============================================
+-- 3. SCHEDULE CONSTRAINTS (6 constraints)
+-- ===============================================
+
+-- Order processing time limit
+context Order
+inv OrderProcessingTimeLimit:
+  self.processedDate <> '' implies self.processedDate >= self.orderDate
+
+-- Payment processing schedule
+context Payment
+inv PaymentProcessingSchedule:
+  self.processedDate <> '' implies self.processedDate >= self.order.orderDate
+
+-- Inventory replenishment timing
+context Product
+inv InventoryReplenishmentTiming:
+  self.stockQuantity < self.reorderPoint implies self.restockAttempts <= 5
+
+-- Rush order time limits
+context Order
+inv RushOrderTimeLimits:
+  self.priority = 'RUSH' implies self.shipment <> null
+
+-- Seasonal product availability
+context Product
+inv SeasonalProductAvailability:
+  self.seasonal = true implies 
+  (self.seasonStartDate <> '' and self.seasonEndDate <> '')
+
+-- Customer account activation timing
+context Customer
+inv CustomerAccountActivation:
+  self.activated = true implies self.activationDate <> ''
+
+-- ===============================================
+-- 4. ELIGIBILITY CONSTRAINTS (6 constraints)
+-- ===============================================
+
+-- Premium customer eligibility
+context Customer
+inv PremiumCustomerEligibility:
+  self.isPremium implies (self.totalPurchases > 10000 and self.membershipDuration > 365)
+
+-- Express shipping eligibility
+context Order
+inv ExpressShippingEligibility:
+  self.shipment <> null and self.shipment.shippingMethod = 'EXPRESS' implies
+  (self.finalAmount >= 100 or self.customer.isPremium)
+
+-- Credit purchase eligibility
+context Payment
+inv CreditPurchaseEligibility:
+  self.paymentMethodType = 'CREDIT' implies
+  (self.order.customer.creditScore >= 650 and
+   self.order.customer.creditLimit >= self.amount)
+
+-- Loyalty rewards eligibility
+context Customer
+inv LoyaltyRewardsEligibility:
+  self.loyaltyPoints > 0 implies (self.accountAge >= 90 and self.orders->size() >= 3)
+
+-- International shipping eligibility
+context Order
+inv InternationalShippingEligibility:
+  self.orderItem->forAll(oi | oi.product.exportAllowed = true)
+
+-- Corporate account eligibility
+context Customer
+inv CorporateAccountEligibility:
+  self.annualVolume > 50000 implies self.isPremium = true
+
+-- ===============================================
+-- 5. RETAKE CONSTRAINTS (4 constraints)
+-- ===============================================
+
+-- Failed order retry limit
+context Order
+inv FailedOrderRetryLimit:
+  self.paymentAttempts <= 3 and (self.paymentAttempts > 1 implies self.retryInterval >= 24)
+
+-- Product restock retry policy
+context Product
+inv RestockRetryPolicy:
+  self.restockAttempts <= 5
+
+-- Delivery retry management
+context Shipment
+inv DeliveryRetryManagement:
+  self.deliveryAttempts <= 3 and
+  (self.deliveryFailed = true implies self.holdAtFacility = true)
+
+-- Payment retry management
+context Payment
+inv PaymentRetryManagement:
+  self.status = 'FAILED' implies self.failureReason <> ''
+
+-- ===============================================
+-- 6. SIZE CONSTRAINTS (8 constraints)
+-- ===============================================
+
+-- Maximum items per order
+context Order
+inv MaxItemsPerOrder:
+  self.orderItem->size() <= 50
+
+-- Minimum cart value
+context Order
+inv MinimumCartValue:
+  self.orderItem->size() > 0 implies self.subtotal >= 25.0
+
+-- Product name length validation
+context Product
+inv ProductNameLength:
+  self.name.size() >= 3 and self.name.size() <= 100
+
+-- Customer order history limit
+context Customer
+inv CustomerOrderHistoryLimit:
+  self.orders->size() <= 10000
+
+-- Supplier product portfolio size
+context Supplier
+inv SupplierProductPortfolioSize:
+  self.products->size() >= 1 and self.products->size() <= 1000
+
+-- Order number format
+context Order
+inv OrderNumberFormat:
+  self.orderNumber.size() >= 6
+
+-- Customer email format
+context Customer
+inv CustomerEmailFormat:
+  self.email.size() > 5
+
+-- SKU format validation
+context Product
+inv SKUFormat:
+  self.sku.size() >= 3
+
+-- ===============================================
+-- 7. TIME CONSTRAINTS (6 constraints)
+-- ===============================================
+
+-- Order processing deadline
+context Order
+inv OrderProcessingDeadline:
+  self.processedDate <> '' implies self.processedDate.size() = 10
+
+-- Payment processing deadline
+context Payment
+inv PaymentProcessingDeadline:
+  self.processedDate <> '' implies self.processedDate.size() = 10
+
+-- Shipment delivery window
+context Shipment
+inv ShipmentDeliveryWindow:
+  self.actualDeliveryDate <> '' implies self.actualDeliveryDate.size() = 10
+
+-- Customer registration validation
+context Customer
+inv CustomerRegistrationValidation:
+  self.registrationDate.size() = 10
+
+-- Product season dates
+context Product
+inv ProductSeasonDates:
+  self.seasonal = true implies 
+  (self.seasonStartDate.size() = 10 and self.seasonEndDate.size() = 10)
+
+-- Activation date validation
+context Customer
+inv ActivationDateValidation:
+  self.activated = true implies self.activationDate.size() = 10
+
+-- ===============================================
+-- 8. SUMPRODUCT CONSTRAINTS (4 constraints)
+-- ===============================================
+
+-- Customer lifetime value calculation
+context Customer
+inv CustomerLifetimeValue:
+  self.lifetimeValue >= 0
+
+-- Product profit calculation
+context Product
+inv ProductProfitCalculation:
+  self.unitPrice >= self.unitCost
+
+-- Order profitability
+context Order
+inv OrderProfitability:
+  self.finalAmount >= self.subtotal
+
+-- Customer value ratio
+context Customer
+inv CustomerValueRatio:
+  self.totalPurchases >= 0
+
+-- ===============================================
+-- 9. STATUS CONSTRAINTS (6 constraints)
+-- ===============================================
+
+-- Customer account status rules
+context Customer
+inv CustomerAccountStatusRules:
+  (self.blacklisted = true implies self.orders->isEmpty()) and
+  (self.suspended = true implies self.status = 'SUSPENDED')
+
+-- Order status progression rules
+context Order
+inv OrderStatusProgressionRules:
+  (self.status = 'CANCELLED' implies self.cancellationReason <> '') and
+  (self.status = 'COMPLETED' implies self.finalAmount > 0)
+
+-- Product status management
+context Product
+inv ProductStatusManagement:
+  (self.stockQuantity = 0 implies self.status = 'OUT_OF_STOCK') and
+  (self.status = 'ACTIVE' implies self.stockQuantity >= 0)
+
+-- Payment status consistency
+context Payment
+inv PaymentStatusConsistency:
+  (self.status = 'FAILED' implies self.failureReason <> '') and
+  (self.status = 'COMPLETED' implies self.transactionId <> '')
+
+-- Shipment status tracking
+context Shipment
+inv ShipmentStatusTracking:
+  (self.status = 'DELIVERED' implies self.signature <> '') and
+  (self.status = 'IN_TRANSIT' implies self.trackingNumber <> '')
+
+-- Supplier status validation
+context Supplier
+inv SupplierStatusValidation:
+  self.status = 'ACTIVE' or self.status = 'BLACKLISTED' or self.status = 'PREFERRED'
+
+-- ===============================================
+-- 10. STRUCTURAL CONSTRAINTS (6 constraints)
+-- ===============================================
+
+-- Order referential integrity
+context Order
+inv OrderReferentialIntegrity:
+  Customer.allInstances()->includes(self.customer)
+
+-- Unique order numbers
+context Order
+inv UniqueOrderNumbers:
+  Order.allInstances()->forAll(o1, o2 | 
+    o1 <> o2 implies o1.orderNumber <> o2.orderNumber)
+
+-- Customer contact uniqueness
+context Customer
+inv CustomerContactUniqueness:
+  Customer.allInstances()->forAll(c1, c2 |
+    c1 <> c2 implies c1.email <> c2.email)
+
+-- Product SKU uniqueness
+context Product
+inv ProductSKUUniqueness:
+  Product.allInstances()->forAll(p1, p2 |
+    p1 <> p2 implies p1.sku <> p2.sku)
+
+-- Valid customer ID
+context Customer
+inv ValidCustomerId:
+  self.id > 0
+
+-- Valid product stock
+context Product
+inv ValidProductStock:
+  self.stockQuantity >= 0
+
+-- ===============================================
+-- 11. STATETRANSITION CONSTRAINTS (Simplified - no @pre)
+-- ===============================================
+
+-- Order state validation
+context Order
+inv OrderStateValidation:
+  self.status = 'PENDING' or self.status = 'PROCESSING' or 
+  self.status = 'SHIPPED' or self.status = 'DELIVERED' or self.status = 'CANCELLED'
+
+-- Payment state validation
+context Payment
+inv PaymentStateValidation:
+  self.status = 'PENDING' or self.status = 'PROCESSING' or 
+  self.status = 'COMPLETED' or self.status = 'FAILED'
+
+-- Customer state validation
+context Customer
+inv CustomerStateValidation:
+  self.status = 'ACTIVE' or self.status = 'SUSPENDED' or self.status = 'BLACKLISTED'
+
+-- Product state validation
+context Product
+inv ProductStateValidation:
+  self.status = 'ACTIVE' or self.status = 'DISCONTINUED' or self.status = 'OUT_OF_STOCK'
+
+-- ===============================================
+-- 12. PERMISSION CONSTRAINTS (Simplified)
+-- ===============================================
+
+-- Order modification tracking
+context Order
+inv OrderModificationTracking:
+  self.managerApproval = true or self.managerApproval = false
+
+-- Customer data protection
+context Customer
+inv CustomerDataProtection:
+  self.dataProcessingConsent = true
+
+-- Payment security
+context Payment
+inv PaymentSecurity:
+  self.encryptedData = true and self.tokenized = true
+
+-- Product access control
+context Product
+inv ProductAccessControl:
+  self.availableForSale = true or self.availableForSale = false
+
+-- ===============================================
+-- 13. COMPLIANCE CONSTRAINTS (Simplified)
+-- ===============================================
+
+-- Payment security compliance
+context Payment
+inv PaymentSecurityCompliance:
+  self.paymentMethodType = 'CREDIT_CARD' implies 
+  (self.encryptedData = true and self.tokenized = true)
+
+-- Customer data compliance
+context Customer
+inv CustomerDataCompliance:
+  self.dataProcessingConsent = true and self.dataRetentionPeriod <= 2555 -- 7 years
+
+-- Order tax compliance
+context Order
+inv OrderTaxCompliance:
+  self.taxAmount >= 0
+
+-- Supplier compliance
+context Supplier
+inv SupplierCompliance:
+  self.contractValid = true or self.status = 'BLACKLISTED'
+-- ===============================================
+-- DATA TYPE
+-- ===============================================
+dataType Date
+  operations
+    Date(day: Integer, month : Integer, year : Integer)
+    pre: day >= 1 and day <= 31
+    pre: month >= 1 and month <= 12
+end
+dataType Time
+  operations
+    Time(hour: Integer, minute: Integer, second: Integer)
+    pre: hour >= 0 and hour < 24
+    pre: minute >= 0 and minute < 60
+    pre: second >= 0 and second < 60
+end
+

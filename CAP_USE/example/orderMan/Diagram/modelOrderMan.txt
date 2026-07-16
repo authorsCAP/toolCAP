@@ -1,0 +1,192 @@
+model OrderManV1
+
+-- ======================
+-- ENUMERATIONS
+-- ======================
+enum OrderStatus {PENDING, CONFIRMED, PACKED, SHIPPED, DELIVERED, CANCELLED}
+enum PaymentStatus {PENDING, PROCESSING, COMPLETED, FAILED, REFUNDED}
+enum ShipmentStatus {PENDING, IN_TRANSIT, DELIVERED}
+enum PaymentMethod {CREDIT_CARD, DEBIT, CREDIT}
+enum Priority {NORMAL, RUSH, EXPRESS}
+
+-- ======================
+-- CORE CLASSES
+-- ======================
+
+class Customer
+attributes
+    id              : Integer
+    name            : String
+    email           : String
+    totalPurchases  : Real  derived = 
+        self.orders->select(o | o.status = OrderStatus::DELIVERED)
+                   ->collect(o | o.finalAmount)->sum()
+    loyaltyPoints   : Integer  derived = (self.totalPurchases/100).floor()
+    lifetimeValue   : Real  derived = self.totalPurchases
+    status          : String
+    isPremium       : Boolean
+    verified        : Boolean
+    blacklisted     : Boolean
+    suspended       : Boolean
+    registrationDate: String
+    membershipDuration: Integer
+    accountAge      : Integer
+    activated       : Boolean
+    activationDate  : String
+    dataConsent     : Boolean
+    creditLimit     : Real
+    dailyLimit      : Real
+    creditScore     : Integer
+    annualVolume    : Real
+end
+class Address
+attributes
+    id              : Integer
+    line            : String
+    city             : String
+    country          : String
+    postalCode      : Real
+end
+
+class Product
+attributes
+    id             : Integer
+    name           : String
+    sku            : String
+    unitPrice      : Real
+    unitCost       : Real
+    weight         : Real
+    stockQty       : Integer
+    reorderPoint   : Integer
+    status         : String
+    availableSale  : Boolean
+    returnable     : Boolean
+    exportAllowed  : Boolean
+    seasonal       : Boolean
+    seasonStart    : String
+    seasonEnd      : String
+    stockValue     : Real  derived = self.unitCost * self.stockQty
+end
+
+class Order
+attributes
+    id             : Integer
+    orderNo        : String
+    orderDate      : String
+    subtotal       : Real  derived = 
+        OrderItem.allInstances()
+            ->select(i | i.order = self)
+            ->collect(i | i.unitPrice * i.quantity)->sum()
+    taxAmount      : Real
+    shippingCost   : Real
+    discount       : Real
+    finalAmount    : Real  derived = 
+        self.subtotal + self.taxAmount + self.shippingCost - self.discount
+    status         : OrderStatus
+    priority       : Priority
+    processedDate  : String
+    mgrApproved    : Boolean
+    creditApproved : Boolean
+    cancelReason   : String
+    refundDone     : Boolean
+    payAttempts    : Integer
+operations
+    itemsTotal(): Real =
+    OrderItem.allInstances()
+        ->select(oi | oi.order = self)
+        ->collect(oi | oi.quantity * oi.unitPrice)->sum()
+    dueAmount(): Real =
+    self.subtotal + self.taxAmount + self.shippingCost - self.discount
+end
+
+associationclass OrderItem
+between
+    Order[1] role order
+    Product[*] role product
+attributes
+    id          : Integer
+    quantity    : Integer
+    unitPrice   : Real
+    status      : String
+    shipRequired: Boolean
+end
+
+class Payment
+attributes
+    id           : Integer
+    amount       : Real
+    status       : PaymentStatus
+    processedDate: String
+    transactionId: String
+    payMethod    : PaymentMethod
+    validated    : Boolean
+    success      : Boolean  derived = (self.status = PaymentStatus::COMPLETED and self.validated)
+end
+
+class Shipment
+attributes
+    id             : Integer
+    trackingNo     : String
+    estDelivery    : String
+    deliveryDate   : String
+    delivered      : Boolean
+    shipMethod     : String
+    expedited      : Boolean
+    attempts       : Integer
+    deliveryFailed : Boolean
+    status         : ShipmentStatus
+    isDelivered    : Boolean  derived = (self.status = ShipmentStatus::DELIVERED and self.delivered)
+end
+
+class Supplier
+attributes
+    id            : Integer
+    name          : String
+    status        : String
+    contractValid : Boolean
+    rating        : Real
+    minLeadTime   : Integer
+    maxLeadTime   : Integer
+    avgLeadTime   : Real  derived = (self.minLeadTime + self.maxLeadTime) / 2
+end
+
+-- ======================
+-- ASSOCIATIONS
+-- ======================
+
+associationclass CustomerAddress
+between
+  Customer[1] role customer
+  Address [1] role address 
+attributes 
+  type : String -- BILLING/SHIPPING 
+  isDefault : Boolean
+end
+association CustomerOrders
+between
+    Customer[1] role customer
+    Order[*]   role orders
+end
+
+association OrderPayment
+between
+    Order[1]   role order
+    Payment[*] role payments
+end
+
+association OrderShipment
+between
+    Order[1]   role order
+    Shipment[*] role shipments
+end
+
+association ProductSupplier
+between
+    Product[*] role product
+    Supplier[1] role supplier
+end
+
+-- ======================
+-- CONSTRAINTS 
+-- ======================
+constraints

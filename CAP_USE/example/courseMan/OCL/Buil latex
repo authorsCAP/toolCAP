@@ -1,0 +1,23 @@
+pdflatex ThesisVinh2025.tex  # Bước 1: Tạo .aux file chứa thông tin trích dẫn
+bibtex ThesisVinh2025        # Bước 2: Xử lý file .bib, tạo .bbl
+pdflatex ThesisVinh2025.tex  # Bước 3: Nhúng thông tin bibliography vào document
+pdflatex ThesisVinh2025.tex  # Bước 4: Giải quyết cross-reference (số thứ tự trích dẫn)
+
+
+pdflatex paper.tex
+biber paper
+pdflatex paper.tex
+pdflatex paper.tex
+
+
+pdflatex Slide_New.tex
+biber Slide_New
+pdflatex Slide_New.tex
+pdflatex Slide_New.tex
+
+Vinh-TomTat
+
+pdflatex Vinh-TomTat.tex
+biber SVinh-TomTat
+pdflatex Vinh-TomTat.tex
+pdflatex Vinh-TomTat.tex

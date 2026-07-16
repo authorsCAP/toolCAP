@@ -1,0 +1,72 @@
+model sumCondTemplate
+enum __AttrType__ {BASIC, ADVANCED, CORE, ELECTIVE}
+enum __AttrType2__ {CORE}
+enum __AttrType3__ {CORE}
+enum __FilAttrType__ {__matchConst__}
+enum __AttrType1__ {__matchConst__}
+enum __NumType__ {Integer, Real, __}
+enum __NumType2__ {Integer, Real, __}
+enum __ValCondAttr__ {Flag1, Flag2, CORE}
+enum __ValAttrType__{Integer}
+enum __ValAttrType1__{Integer}
+enum __ValAttrType2__{Integer}
+enum __ValAttrType3__{Integer}
+enum __ValAttrType4__{Integer}
+
+class __ClassA__
+attributes
+	__valueAttr1__ : __ValAttrType1__
+--	__thresholdAttr__ : __NumType__
+end
+class __ClassB__
+attributes
+--__valueAttr2__ : __AttrType2__
+end
+class __ClassC__
+attributes
+	__prereqAttr__:__AttrType1__
+--	__filterAttr1__:__AttrType3__
+	end
+associationclass __ClassD__
+between
+    __ClassA__[*] role __role1__    
+    __ClassB__[*] role __role2__
+attributes
+ 	__filterAttr__ : __AttrType2__
+    __valueAttr2__ : __ValAttrType2__
+end
+
+class __ClassE__
+attributes
+__valueAttr4__ : __ValAttrType4__
+end
+class __ClassF__
+attributes
+__valueAttr3__ : __ValAttrType3__
+end
+
+association linkbc
+between
+	__ClassB__[*] role __role2__
+	__ClassC__[1] role __role3__
+end
+association linkae
+between
+	__ClassA__[1] role __role1__
+	__ClassE__[*] role __role5__
+end
+association linkbf
+between
+	__ClassB__[*] role __role2__
+	__ClassF__[1] role __role4__
+end
+association linkef
+between
+	__ClassE__[*] role __role5__
+	__ClassF__[1] role __role4__
+end
+association linkself
+between
+	__ClassC__[*] role __role2self__
+	__ClassC__[*] role __prerequisites__
+end

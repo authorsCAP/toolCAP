@@ -1,0 +1,122 @@
+--=======================================================
+-------------------RETEAKE
+--=======================================================
+----------------Student
+context Student
+inv cm76_NoRetakePassedCourses:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+    ->forAll(activeEnrol |
+      not self.enrolment->exists(passedEnrol |
+        passedEnrol.offering.module = activeEnrol.offering.module and
+        passedEnrol.status = EnrolStatus::COMPLETED and
+        passedEnrol.grade >= 'C'
+      )
+    )
+context Student
+inv cm77_MaxAttemptsCourse:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE)  -- hoặc ENROLLED
+    ->forAll(ae |
+      Enrolment.allInstances()
+        ->select(x |
+          x.student = self and
+          x.offering.module = ae.offering.module and
+          x <> ae and
+          (x.status = EnrolStatus::COMPLETED or x.status = EnrolStatus::ACTIVE)
+        )->size() < 3   -- < 3 attempts trước đó ⇒ cho phép active hiện tại là attempt #3
+    )
+context Student
+inv cm78_MaxFailuresPerCourse:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE)
+    ->forAll(ae |
+      self.enrolment
+        ->select(x | x.offering.module = ae.offering.module and
+                   x.status = EnrolStatus::COMPLETED and x.grade = 'F')
+        ->size() < 2
+    )
+
+context Student
+inv cm79_LowGPARetakeRequirement:
+  self.cumulativeGPA < 2.0 implies(
+    let recentFailures : Set(Enrolment) =
+      self.enrolment
+        ->select(e | 
+          e.status = EnrolStatus::COMPLETED and
+          (e.grade = 'F' or e.grade = 'D'))
+        ->asSet() in
+    recentFailures->forAll(failure |
+      self.enrolment->exists(improvement |
+        improvement.offering.module = failure.offering.module and
+        improvement <> failure and
+        (improvement.status = EnrolStatus::ACTIVE or 
+         (improvement.status = EnrolStatus::COMPLETED and improvement.grade >= 'C'))
+      ))
+    )
+------------CourseModule
+context CourseModule
+inv cm80_CoreModuleRetakePolicy:
+  self.type = CourseType::CORE implies
+    Student.allInstances()->forAll(student |
+      let attempts : Integer =
+        student.enrolment
+          ->select(e | e.offering.module = self)
+          ->size()
+      in attempts <= 4
+    )
+
+
+context CourseModule
+inv cm81_CapstoneRetakeRestriction:
+  self.isCapstone = true implies
+    Student.allInstances()->forAll(student |
+      let attempts : Integer =
+        student.enrolment->select(e | e.offering.module = self)->size() in
+      attempts <= 2
+    )
+-----------Enrolment
+context Enrolment
+inv cm82_ValidRetakeAttempt:
+  let previousAttempts : Set(Enrolment) =
+    Enrolment.allInstances()
+      ->select(e | 
+        e.student = self.student and
+        e.offering.module = self.offering.module and
+        e <> self)
+      ->asSet() in
+  previousAttempts->notEmpty() implies
+    previousAttempts->exists(prev | 
+      prev.status = EnrolStatus::COMPLETED and
+      (prev.grade = 'F' or prev.grade = 'D'))
+
+context Enrolment  
+inv cm83_RetakeTimingRestriction:
+  let previousAttempts : Set(Enrolment) =
+    Enrolment.allInstances()
+      ->select(e | 
+        e.student = self.student and
+        e.offering.module = self.offering.module and
+        e.status = EnrolStatus::COMPLETED and
+        e.grade = 'F' and
+        e <> self)
+      ->asSet() in
+  previousAttempts->notEmpty() implies
+    previousAttempts->forAll(prev |
+      not (prev.offering.term = self.offering.term)
+    )
+
+
+----------TermRecord
+context TermRecord
+inv cm84_MaxRetakesPerTerm:
+  let retakesThisTerm : Integer =
+    self.student.enrolment
+      ->select(e | e.offering.term = self.term and e.status = EnrolStatus::ACTIVE)
+      ->select(activeEnrol |
+        self.student.enrolment->exists(prev |
+          prev.offering.module = activeEnrol.offering.module and
+          prev.status = EnrolStatus::COMPLETED and
+          prev <> activeEnrol))
+      ->size()
+  in retakesThisTerm <= 3

@@ -1,0 +1,142 @@
+model ticketVending
+
+class TicketSale
+attributes
+    id : Integer
+    currentShift : Integer
+    totalAmount : Real
+    totalTickets : Integer
+    dailyLimit : Real
+    maxTicketsPerShift : Integer
+    isMinTicketsExempt : Boolean
+    successRateLastShift : Real
+    kioskStatus : String                 -- e.g., 'NORMAL' | 'ALERT'
+    returnsLastShift : Integer
+    isMultiModal : Boolean
+    isFirstDay : Boolean
+    minAmountFirstDay : Real
+    maxAmountFirstDay : Real
+end    
+
+class FareProduct
+attributes
+    id : Integer
+    name : String
+    price : Real
+    category : String                    -- e.g., 'REGULAR' | 'DISCOUNT' | 'STUDENT'
+    zone : Integer
+    mode : String                        -- e.g., 'BUS' | 'METRO' | 'RAIL'
+end
+
+associationclass SaleItems
+between
+    TicketSale[1..*] role sale
+    FareProduct[*]   role product
+attributes
+    id : Integer
+    quantity : Integer
+    shift : Integer
+    isCharged : Boolean
+    status : String                      -- e.g., 'Confirmed' | 'Cancelled' | 'Refunded'
+end
+
+constraints
+
+-- The session total must equal the sum of (price × quantity) for charged, confirmed lines in the current shift.
+context TicketSale
+inv T1_TotalAmountEqualsSum:
+  let s : Real =
+    self.saleItems
+      ->select(i | i.isCharged = true and i.status = 'Confirmed' and i.shift = self.currentShift)
+      ->collect(i | i.product.price * i.quantity)
+      ->sum()
+  in s = self.totalAmount
+
+-- The displayed total ticket count must equal the sum of quantities in the current shift.
+context TicketSale
+inv T2_TotalTicketsEqualsSum:
+  self.totalTickets =
+    self.saleItems
+      ->select(i | i.shift = self.currentShift)
+      ->collect(i | i.quantity)
+      ->sum()
+
+-- The total amount in the current shift must not exceed the session limit.
+context TicketSale
+inv T3_AmountWithinLimit:
+  let s : Real =
+    self.saleItems
+      ->select(i | i.isCharged = true and i.shift = self.currentShift)
+      ->collect(i | i.product.price * i.quantity)
+      ->sum()
+  in s <= self.dailyLimit
+
+-- The number of tickets in the current shift must not exceed the maximum per shift.
+context TicketSale
+inv T4_MaxTicketsPerShift:
+  let n : Integer =
+    self.saleItems
+      ->select(i | i.shift = self.currentShift)
+      ->collect(i | i.quantity)
+      ->sum()
+  in n <= self.maxTicketsPerShift
+
+-- Unless exempt, the session must sell at least 20 tickets in the current shift.
+context TicketSale
+inv T5_MinTicketsUnlessExempt:
+  let n : Integer =
+    self.saleItems
+      ->select(i | i.shift = self.currentShift)
+      ->collect(i | i.quantity)
+      ->sum()
+  in (not self.isMinTicketsExempt) implies n >= 20
+
+-- If last shift's success rate is below 0.9, cap the current shift amount at 20000.0.
+context TicketSale
+inv T6_SuccessRateCapOnAmount:
+  let s : Real =
+    self.saleItems
+      ->select(i | i.isCharged = true and i.shift = self.currentShift)
+      ->collect(i | i.product.price * i.quantity)
+      ->sum()
+  in self.successRateLastShift < 0.9 implies s <= 20000.0
+
+-- When kiosk is in ALERT, the number of DISCOUNT product lines in the current shift must be ≤ 5 (counting elements).
+context TicketSale
+inv T7_AlertDiscountCap:
+  let cnt : Integer =
+    self.saleItems
+      ->select(i | i.shift = self.currentShift and i.product.category = 'DISCOUNT')
+      ->collect(i | 1)->sum()
+  in self.kioskStatus = 'ALERT' implies cnt <= 5
+
+-- If returned tickets last shift > 10, then ticket quantity this shift must be ≤ 50.
+context TicketSale
+inv T8_ReturnPenaltyUnitsCap:
+  let n : Integer =
+    self.saleItems
+      ->select(i | i.shift = self.currentShift)
+      ->collect(i | i.quantity)
+      ->sum()
+  in self.returnsLastShift > 10 implies n <= 50
+
+-- For multimodal sessions, spend on METRO mode this shift must be ≥ 5000.0.
+context TicketSale
+inv T9_MinSpendPerMetroMode:
+  let s_metro : Real =
+    self.saleItems
+      ->select(i | i.shift = self.currentShift and i.product.mode = 'METRO')
+      ->collect(i | i.product.price * i.quantity)
+      ->sum()
+  in self.isMultiModal implies s_metro >= 5000.0
+
+-- On the first day, the amount in the current shift must fall within [minAmountFirstDay, maxAmountFirstDay].
+context TicketSale
+inv T10_FirstDay_AmountRange:
+  let s : Real =
+    self.saleItems
+      ->select(i | i.isCharged = true and i.status = 'Confirmed' and i.shift = self.currentShift)
+      ->collect(i | i.product.price * i.quantity)
+      ->sum()
+  in self.isFirstDay implies (s >= self.minAmountFirstDay and s <= self.maxAmountFirstDay)
+

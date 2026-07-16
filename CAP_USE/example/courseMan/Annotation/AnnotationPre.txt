@@ -1,0 +1,229 @@
+--=====================================
+
+)
+-- =====================================
+----------Prerequisites
+--=====================================
+-----------Student
+--Chỉ cho đăng ký khi đã thỏa tất cả các tiên quyết. Tiên quyết phải đạt tối thiểu (ví dụ ≥ 'C').
+-- (tuỳ chọn) siết về kỳ hiện tại và ENROLLED cho thống nhất
+context Student
+inv cm20_PrerequisitesSatisfied:
+  self.enrolment->forAll(e |
+    (e.status = EnrolStatus::ENROLLED and e.offering.term = self.curTerm) implies
+      e.offering.module.prerequisites->forAll(pr |
+        self.enrolment->exists(pe |
+          pe.offering.module = pr and
+          pe.status = EnrolStatus::COMPLETED and
+          pe.grade >= 'C'
+        )
+      )
+  )
+@PrerequisiteConstraint(
+	name="cm20_PrerequisitesSatisfied",
+    assocCls =@AssocCls(assoc={'Enrolment'}),
+    rolePath = @RolePath(role = {'offering', 'module'}),
+    rolePath2= @RolePath(role ={'term', 'termRecord'})
+    collect = {@AttrCond(attr='status', matchVal='EnrolStatus::ENROLLED')},
+		checkedRole =   "prerequisites",
+	  ifPart=@AttrCond(attr="status",  matchStr="COMPLETED"),
+	@AttrCond(attr="grade",  minLim="C")
+)
+--Không học đồng thời một môn và môn phụ thuộc trực tiếp vào nó 
+context Student
+inv cm21_ExclusionAndRetakeRules:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+    ->forAll(activeEnrol |
+      -- No exclusion conflicts
+      not activeEnrol.offering.module.exclusions->exists(excludedModule |
+        self.enrolment->exists(conflictEnrol |
+          conflictEnrol.offering.module = excludedModule and
+          ((conflictEnrol.status = EnrolStatus::COMPLETED and conflictEnrol.grade >= 'C') or
+           (conflictEnrol.status = EnrolStatus::ACTIVE and conflictEnrol.offering.term = self.curTerm))
+        )
+      )
+      and
+      -- No retake of passed modules  
+      not self.enrolment->exists(passedEnrol |
+        passedEnrol.status = EnrolStatus::COMPLETED and 
+        passedEnrol.grade >= 'C' and
+        passedEnrol.offering.module = activeEnrol.offering.module
+      )
+    )
+    @PrerequisiteConstraint(
+	name = 'pr02_NoReversePrerequisites',
+    assocCls =@AssocCls(as1="Enrolment"),
+    rolePath = @RolePath(r1 = "offering", r2 = "module"),
+	@RolePath(role1="offering", role2="module"),
+	checkedRole =   "prerequisites",
+	    fixAttr = {
+        @RolePath(r1 = 'e1', r2 = 'offering', r3='module'),
+        @AttrRef(matchStr = 'in', neg=true)
+		 @RolePath(r1 = 'e2', r2 = 'offering', r3='module'),
+        @AttrRef(matchStr = 'in')
+    }
+	
+) 
+ 
+--Không được đăng ký nếu xung đột với các môn trong danh sách loại trừ (đã qua hoặc đang học kỳ hiện tại).
+context Student 
+inv cm22_Exclusion:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ENROLLED and e.offering.term = self.curTerm)
+    ->forAll(activeEnrol |
+      -- xung đột với môn đã hoàn tất (đạt)
+      not activeEnrol.offering.module.exclusions->exists(exM |
+        self.enrolment->exists(pastEnrol |
+          pastEnrol.offering.module = exM and
+          pastEnrol.status = EnrolStatus::COMPLETED and
+          pastEnrol.grade >= 'C'
+        )
+      )
+      and
+      -- xung đột với các môn đang học cùng kỳ
+      self.enrolment
+        ->select(other | other <> activeEnrol and other.status = EnrolStatus::ENROLLED and other.offering.term = self.curTerm)
+        ->forAll(other | not activeEnrol.offering.module.exclusions->includes(other.offering.module))
+    )
+
+-- Yêu cầu tổng tín chỉ tích luỹ tối thiểu trước khi được học môn nâng cao
+context Student
+inv cm23_MinAccumulatedCreditsForAdvanced:
+  let totalPassedCredits : Integer =
+    self.enrolment
+      ->select(e | e.status = EnrolStatus::COMPLETED and e.grade >= 'C')
+      ->collect(e | e.offering.module.credits)->sum()
+  in
+    self.enrolment
+      ->select(e | e.status = EnrolStatus::ACTIVE)
+      ->forAll(activeEnrol | 
+        activeEnrol.offering.module.requiredCredits > 0 implies
+          totalPassedCredits >= activeEnrol.offering.module.requiredCredits
+      )
+
+--Các corequisite phải đang học đồng thời trong kỳ hiện tại hoặc đã hoàn tất trước đó.
+context Student
+inv cm24_CorequisitesSatisfied:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+    ->forAll(activeEnrol |
+      activeEnrol.offering.module.corequisites->forAll(coreq |
+          self.enrolment->exists(concurrentEnrol |
+          concurrentEnrol.offering.module = coreq and
+          concurrentEnrol.status = EnrolStatus::ACTIVE and
+          concurrentEnrol.offering.term = self.curTerm
+        )
+        or
+        self.enrolment->exists(completedEnrol |
+          completedEnrol.offering.module = coreq and
+          completedEnrol.status = EnrolStatus::COMPLETED and
+          completedEnrol.grade >= 'C'
+        )
+      )
+    )
+
+--Maximum Failed Attempts:
+context Student
+inv cm25_MaxFailedAttempts:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ENROLLED)
+    ->forAll(activeEnrol |
+      self.enrolment
+        ->select(x |
+          x.offering.module = activeEnrol.offering.module and
+          x.status = EnrolStatus::COMPLETED and
+          x.grade = 'F')
+        ->size() < 2
+    )
+
+--GPA Prerequisites:
+context Student
+inv cm26_GPAPrerequisites:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.module.level = CourseLevel::ADVANCED)
+    ->forAll(advEnrol |
+      self.cumulativeGPA >= 2.5  -- Minimum GPA for advanced modules
+    )
+
+--Không đăng ký trùng Offering (anti–double-booking)
+context Student
+inv cm27_NoDuplicateActiveEnrollment:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ACTIVE and e.offering.term = self.curTerm)
+    ->isUnique(e | e.offering)
+
+-- Không retake môn đã qua
+context Student
+inv cm28_NoRegisterCompletedModule:
+  self.enrolment
+    ->select(e | e.status = EnrolStatus::ENROLLED and e.offering.term = self.curTerm)
+    ->forAll(ae |
+      not self.enrolment
+        ->exists(pe | pe.status = EnrolStatus::COMPLETED and pe.grade >= 'C'
+                       and pe.offering.module = ae.offering.module)
+    )
+
+--================CourseModule
+-- No self prerequisite
+context CourseModule
+inv cm29_NoSelfPrereq:
+  not self.prerequisites->includes(self)
+
+-- No cyclic prerequisite
+context CourseModule
+inv cm30_NoCyclicPrereq:
+  not self.prerequisites->closure(x | x.prerequisites)->includes(self)
+
+-- No self exclusion
+context CourseModule
+inv cm31_NoSelfExclusion:
+  not self.exclusions->includes(self)
+
+-- No self corequisite
+context CourseModule
+inv cm32_NoSelfCorequisite:
+  not self.corequisites->includes(self)
+
+-- Exclusion symmetric (đề xuất giữ)
+context CourseModule
+inv cm33_ExclusionSymmetric:
+  self.exclusions->forAll(excluded |
+    excluded.exclusions->includes(self))
+
+
+--==============CourseOffering
+-- Có mở lớp cho các môn tiên quyết (tối thiểu 1 kỳ nào đó)
+context CourseOffering
+inv cm34_PrereqOfferingsAvailable:
+  self.module.prerequisites->forAll(pr |
+    CourseOffering.allInstances()->exists(prOff | prOff.module = pr)
+  )
+
+-- Có mở lớp corequisite trong cùng kỳ
+context CourseOffering
+inv cm35_CorequisiteOfferingsAvailable:
+  self.module.corequisites->forAll(c |
+    CourseOffering.allInstances()->exists(co |
+      co.module = c and co.term = self.term
+    )
+  )
+
+--===============AcademicTerm
+-- mỗi học phần tiên quyết phải có ít nhất một Offering ở một kỳ kết thúc trước kỳ hiện tại.
+context AcademicTerm
+inv cm36_PrerequisiteOfferingsSequence:
+  (not self.startDate.oclIsUndefined() and not self.endDate.oclIsUndefined()) implies
+    self.offering->forAll(cur |
+      cur.module.prerequisites->forAll(pr |
+        AcademicTerm.allInstances()
+          ->select(t |
+            not t.startDate.oclIsUndefined() and
+            not t.endDate.oclIsUndefined() and
+            t.endDate < self.startDate
+          )
+          ->exists(prev |
+            prev.offering->exists(prOff | prOff.module = pr)
+          )
+      )
+    )

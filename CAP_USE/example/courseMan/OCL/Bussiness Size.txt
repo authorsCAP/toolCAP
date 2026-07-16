@@ -1,0 +1,6 @@
+OCL Size constraints:Govern resource allocation based on participant quantity thresholds:
+1. Ensuring resources have sufficient participants to operate effectively; 
+2. Preventing oversubscription while allowing exceptions for essential resources; 
+3. Implementing multi-criteria sorting when demand exceeds capacity;
+4. Triggering alternative resource management strategies when minimum thresholds aren't met;
+5.  Enforcing state changes for resources that fail to meet participation requirements.

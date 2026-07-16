@@ -1,0 +1,261 @@
+model CourseMan
+
+-- ======================
+-- ENUMERATIONS
+-- ======================
+enum StudentStatus {ENROLLED, GRADUATED, PROBATION, SUSPENDED}
+enum CourseLevel {BASIC, ADVANCED}
+enum CourseType {CORE, ELECTIVE}
+enum EnrolStatus {PLANNED, ACTIVE, COMPLETED, WITHDRAWN}
+enum AcademicStatus {GOOD, PROBATION}
+
+-- ======================
+-- CORE CLASSES
+-- ======================
+
+class Student
+attributes
+    studentId     : String
+    name          : String
+    email         : String
+    curSemester   : String
+    year          : Integer
+    status        : StudentStatus
+end
+
+class CourseModule
+attributes
+    moduleCode    : String
+    title         : String
+    credits       : Integer
+    tuitionFee    : Real
+    level         : CourseLevel
+    type          : CourseType
+end
+
+class CourseOffering
+attributes
+    offeringId    : Integer
+    semester      : String
+    year          : Integer
+    capacity      : Integer
+end
+
+class Program
+attributes
+    programCode   : String
+    programName   : String
+    totalCredits  : Integer
+    minGPA        : Real
+    tuitionCap    : Real
+end
+
+class AcademicTerm
+attributes
+    termId        : Integer
+    semester      : String
+    year          : Integer
+    startDate     : String
+    endDate       : String
+end
+
+class StudentTermRecord
+attributes
+    termCredits     : Integer
+    tuitionTotal    : Real
+    gpa             : Real
+    withdrawals     : Integer
+    academicStatus  : AcademicStatus
+end
+
+class StudentAcademicRecord
+attributes
+    totalCreditsCompleted : Integer
+    cumulativeGPA         : Real
+    overallStatus         : AcademicStatus
+end
+
+class StudentAccount
+attributes
+    balance         : Real
+    aidCap          : Real
+    feePaid         : Boolean
+    outstandingFees : Real
+end
+
+class Instructor
+attributes
+    instructorId  : String
+    name          : String
+    email         : String
+    availability  : String
+end
+
+class SClass
+attributes
+    classId       : Integer
+    schedule      : String
+    room          : String
+    minStudents   : Integer
+    maxStudents   : Integer
+    status        : String
+end
+
+class Department
+attributes
+    departmentId   : String
+    departmentName : String
+end
+
+-- ======================
+-- ASSOCIATION CLASS
+-- ======================
+
+associationclass Enrolment
+between
+    Student[1] role student      
+    CourseOffering[*] role offering    
+attributes
+    enrolId       : Integer
+    status        : EnrolStatus       
+    grade         : String
+    scholarship   : Real
+    term          : Integer
+end
+
+-- ======================
+-- ASSOCIATIONS
+-- ======================
+
+association Offers
+between
+    CourseModule[1] role module
+    CourseOffering[*] role offerings
+end
+
+association Prerequisites
+between
+    CourseModule[*] role modules
+    CourseModule[*] role prerequisites
+end
+
+association StudentProgram
+between
+    Student[*] role students
+    Program[1] role program
+end
+
+association ProgramDepartment
+between
+    Program[*] role programs
+    Department[1] role department
+end
+
+association CourseProgram
+between
+    CourseModule[*] role modules
+    Program[1] role program
+end
+
+association InstructorDepartment
+between
+    Instructor[*] role instructors
+    Department[1] role department
+end
+
+association Teaching
+between
+    CourseOffering[*] role offerings
+    Instructor[1] role instructor
+end
+
+association ClassOffering
+between
+    SClass[*] role classes
+    CourseOffering[1] role offering
+end
+
+association StudentTerm
+between
+    Student[1] role student
+    StudentTermRecord[*] role termRecords
+end
+
+association StudentAccountLink
+between
+    Student[1] role student
+    StudentAccount[1] role account
+end
+
+association StudentAcademic
+between
+    Student[1] role student
+    StudentAcademicRecord[1] role academic
+end
+
+association TermOffering
+between
+    AcademicTerm[1] role term
+    CourseOffering[*] role offerings
+end
+association TermRecordTerm
+between
+    StudentTermRecord[*] role termRecords
+    AcademicTerm[1] role term
+end
+
+
+-- ======================
+-- CONSTRAINTS
+-- ======================
+
+constraints
+
+-- Sum constraint: Total tuition equals sum of course fees
+context Student
+inv SumConType1_TotalTuitionEqualsSum:
+let s = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.tuitionFee)->sum()
+in 
+self.termRecords
+    ->select(tr | tr.term.semester = self.curSemester)
+    ->forAll(tr | tr.tuitionTotal = s)
+
+-- Sum constraint: Term credits consistency
+context Student
+inv SumConType2_TermCreditsConsistency:
+let credits = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+in 
+self.termRecords
+    ->select(tr | tr.term.semester = self.curSemester)
+    ->forAll(tr | tr.termCredits = credits)
+
+-- Constraint: Tuition within program limit
+context Student
+inv TuitionWithinProgramLimit:
+let totalTuition = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.tuitionFee)->sum()
+in totalTuition <= self.program.tuitionCap
+
+-- Constraint: Maximum credits per term
+context Student
+inv MaxCreditsPerTerm:
+let totalCredits = self.enrolment
+    ->select(e | e.offering.semester = self.curSemester)
+    ->collect(e | e.offering.module.credits)->sum()
+in totalCredits <= 30
+
+-- Constraint: Academic status consistency
+context Student
+inv AcademicStatusConsistency:
+self.termRecords
+    ->select(tr | tr.term.semester = self.curSemester)
+    ->forAll(tr | 
+        (tr.gpa < 2.0 implies tr.academicStatus = AcademicStatus::PROBATION) and
+        (tr.gpa >= 2.0 implies tr.academicStatus = AcademicStatus::GOOD)
+    )
+

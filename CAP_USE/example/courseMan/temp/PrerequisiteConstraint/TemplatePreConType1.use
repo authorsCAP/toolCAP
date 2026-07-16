@@ -1,0 +1,66 @@
+model TemplatePreConCourseMan
+
+class __ClassA__
+attributes
+--  __matchAttr__   : __matchType__    
+--  __valueAttr__   : __matchType__   
+end
+
+class __ClassB__
+attributes
+--  __filterAttr__  : __matchType__    
+end
+
+
+class __ClassC__
+attributes
+ -- __sumAttr__     : __matchType__  
+ __valueRequire__  : __matchType__ 
+end
+
+associationclass __ClassD__
+between
+  __ClassA__[1] role  __roleA__           -- vai trò ví dụ: student
+  __ClassB__[*] role __role1__            -- vai trò ví dụ: offering
+attributes
+  __filterAttr__   : __constantStatus__   -- ví dụ: enrolStatus
+  __curAttr__      : __matchType__              -- ví dụ: term hiện tại
+  __preAttr__      : __matchType__              -- ví dụ: term cần so với điều kiện tiên quyết
+  __valueCompAttr__ : __matchType__       -- ví dụ: grade, GPA  
+end
+
+-- Quan hệ prerequisite (self-association cho class môn học)
+association __Prereq__
+between
+  __ClassC__[*] role __roleC__
+  __ClassC__[*] role __rolPathPre__
+end
+
+-- Quan hệ liên kết phụ
+association __Link__
+between
+  __ClassC__[1] role __role2__
+  __ClassB__[*] role __roleB__
+end
+enum __matchType__{Integer, Real, String}
+enum __constantStatus__{PLANNED, ACTIVE, COMPLETED, PROBATION, GOOD}
+--==================================================
+constraints
+
+-- Tham số hóa mẫu invariant cho ràng buộc prerequisite
+--context __ClassA__
+--inv __invName__:
+--self.__ClassD__
+-- ->select(e | e.__filterAttr__ = __matchVal__ or e.__filterAttr__ = __matchVal2__)
+-- ->forAll(e |
+--  let m : __ClassB__ = e.__role1__.__role2__ in
+--  m.__rolPathPre__->forAll(p |
+--    self.__Class2__->exists(e2 |
+ --     e2.__role1__.__role2__ = p and
+--      e2.__filterAttr__ = __matchVal3__ and
+--      e2.__curAttr__ < e.__preAttr__ and
+--      e2.__valueCompAttr__ >= __valueRequire__
+--    )
+--  )
+--)
+

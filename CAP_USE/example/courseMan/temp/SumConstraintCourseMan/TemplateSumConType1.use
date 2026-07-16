@@ -1,0 +1,55 @@
+model TemplateSumConCourseMan
+class __ClassA__                
+attributes
+  __matchAttr__ : __matchType__    
+  __valueAttr__ : __valueType__         
+end
+
+class __ClassB__                  
+attributes
+  __filterAttr__ : __matchType__    
+end
+
+class __ClassC__                  
+attributes
+  __sumAttr__ : __valueType__          
+end
+
+associationclass __ClassD__   
+between
+  __ClassA__[1] role __role3__    
+  __ClassB__[*] role __role1__    
+ 
+ attributes
+  __statusAttr__ : __constantStatus__
+
+end
+
+association __Link__
+between
+  __ClassC__[1] role __role2__     
+  __ClassB__[*] role __roles4__              
+
+end
+enum __valueType__ {Integer, Real}
+enum __matchType__ {Integer, Real, String}
+enum __constantStatus__ {PROBATION, GOOD}
+
+constraints
+
+
+--context __ClassA__ inv __invName__:
+--let s = self.__ClassD__
+--   ->select(e | e.__role__.__filterAttr__ = self.__matchAttr__)
+--   ->collect(e | e.__role__.__role2__.__sumAttr__)->sum() 
+--in s = self.__valueAttr__
+
+--context __ClassA__ inv __invName__:
+--let s = __ClassD__.allInstances()                  
+--    ->select(e | e.__role1__ = self)                
+--    ->select(e | e.__role__.__filterAttr__ = self.__matchAttr__)
+--    ->collect(e | e.__role__.__role2__.__sumAttr__)->sum() 
+--in s = self.__valueAttr__
+
+
+

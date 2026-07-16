@@ -1,0 +1,12 @@
+ Sum  Constraints
+  This pattern defines OCL constraints for controlling and managing quantities, values, or resources through aggregation operations. 
+Specifically, this pattern ensures that the aggregate value stored in an entity always equals the total of its related components. It is used to prevent discrepancies between derived data and source data, thereby supporting reconciliation and auditing.
+ 1. Equality / Reconciliation (Summation match).
+ Ensures that the aggregate value stored on an entity always equals the total of its related components, which may include surcharges, deductions, or taxes. T
+ Constrains derived quantities to equal the sum of filtered constituent elements. 
+ 2. Bounds (Min / Max / Range).
+Constrains a total value to remain within a lower bound, upper bound, or interval [min, max]. This variant generalizes rules such as caps on funds/resources, participation floors, or registration windows, and can be expressed through one or more OCL invariants. It defines evaluation order, prioritization strategies, and conflict-resolution logic—supporting rule-based configuration, traceable audits, and modular extensibility as business policies evolve.
+3. Conditional / State-Based Enforcement.
+Activates or exempts a total constraint only when a predicate holds (or when an exemption flag is off). The condition may depend on previous-period performance (GPA, KPI), business state (PROBATION / ONHOLD), or violation history (number of withdrawals/cancellations). It enables stricter thresholds or additional limits in context-specific situations without altering the core summation formula.
+4. Group-Wise / Relative Constraints.
+Applies min/max/quota limits per group (the group key derived from a target or association-class attribute) or constrains relative proportions (e.g., a group’s share <= p\% of the total). This variant enforces balanced or diversified allocation across categories while remaining independent of any specific summation formula (which might be weighted or a count).
